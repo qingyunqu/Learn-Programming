@@ -10,4 +10,4 @@ conv: cudnn_conv.cpp comm.cpp main.cpp
 .phony: clean
 
 clean:
-	rm $(TARGET) || echo -n ""
+	rm test || echo -n ""
