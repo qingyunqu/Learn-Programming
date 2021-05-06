@@ -1,7 +1,7 @@
+#include <assert.h>
 #include <iostream>
 #include <memory>
 #include <thread>
-#include <assert.h>
 
 #include <cuda_runtime.h>
 #include <unistd.h>
@@ -39,14 +39,14 @@ void run_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes) {
     void* data = nullptr;
     CUDACHECK(cudaMalloc(&data, N));
     CUDACHECK(cudaMemsetAsync(data, 0, N, comm->getStream()));
-    int times = 400;
-    int effective = 400;
+    int times = 100;
+    int effective = 100;
     for (int i = 0; i < times + 10; i++) {
-        if(i == 10) {
+        if (i == 10) {
             CUDACHECK(cudaEventRecord(start, comm->getStream()));
         }
         comm->allReduce(data, N / 4, ncclFloat32, ncclSum);
-        if(i == effective + 9) {
+        if (i == effective + 9) {
             CUDACHECK(cudaEventRecord(stop, comm->getStream()));
         }
     }
@@ -58,11 +58,13 @@ void run_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes) {
     CUDACHECK(cudaEventDestroy(start));
     CUDACHECK(cudaEventDestroy(stop));
 
-    std::cout << "single nccl " << N << " bytes, average time: " << sum / effective << "ms"
+    std::cout << "single nccl " << N
+              << " bytes, average time: " << sum / effective << "ms"
               << std::endl;
 }
 
-void run_nccl_nccl(int rank, std::unique_ptr<Comm>& comm, std::unique_ptr<Comm>& comm1) {
+void run_nccl_nccl(int rank, std::unique_ptr<Comm>& comm,
+                   std::unique_ptr<Comm>& comm1) {
     CUDACHECK(cudaSetDevice(rank));
     int N = 500000000;
     cudaEvent_t start, start1;
@@ -81,7 +83,7 @@ void run_nccl_nccl(int rank, std::unique_ptr<Comm>& comm, std::unique_ptr<Comm>&
     CUDACHECK(cudaEventRecord(start1, comm1->getStream()));
     CUDACHECK(cudaStreamWaitEvent(comm->getStream(), start1, 0));
     CUDACHECK(cudaStreamWaitEvent(comm1->getStream(), start1, 0));
-    for(int i = 0; i < times + 10; i++) {
+    for (int i = 0; i < times + 10; i++) {
         comm->allReduce(data, N, ncclInt8, ncclSum);
         comm1->allReduce(data, N, ncclInt8, ncclSum);
     }
@@ -92,18 +94,27 @@ void run_nccl_nccl(int rank, std::unique_ptr<Comm>& comm, std::unique_ptr<Comm>&
 void run_cudnn(int rank, int argnum = 4) {
     CUDACHECK(cudaSetDevice(rank));
     auto arg = arg_list[argnum];
-    Conv conv(arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]);
+    int batch_size = arg[0];
+    int C = arg[1];
+    int H = arg[2];
+    int W = arg[3];
+    int kernel_size = arg[4];
+    int K = arg[5];
+    int stride = arg[6];
+    int padding = arg[7];
+    Conv conv(C, K, H, W, batch_size, kernel_size, stride, padding);
+
     cudaEvent_t start, stop;
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&stop));
-    int times = 400;
-    int effective = 400;
+    int times = 100;
+    int effective = 100;
     for (int i = 0; i < times + 10; i++) {
-        if(i == 10) {
+        if (i == 10) {
             CUDACHECK(cudaEventRecord(start, conv.getStream()));
         }
         conv.forward();
-        if(i == effective + 9) {
+        if (i == effective + 9) {
             CUDACHECK(cudaEventRecord(stop, conv.getStream()));
         }
     }
@@ -111,17 +122,27 @@ void run_cudnn(int rank, int argnum = 4) {
     float sum = 0.0;
     CUDACHECK(cudaEventElapsedTime(&sum, start, stop));
 
-    std::cout << "single cudnn: (" << arg[0] << "," << arg[1] << "," << arg[2] << "," << arg[3] << ","
-              << arg[4] << "," << arg[5] << "," << arg[6] << "," << arg[7] << ")"
+    std::cout << "single cudnn: (" << arg[0] << "," << arg[1] << "," << arg[2]
+              << "," << arg[3] << "," << arg[4] << "," << arg[5] << ","
+              << arg[6] << "," << arg[7] << ")"
               << " average time " << sum / effective << "ms" << std::endl;
     CUDACHECK(cudaEventDestroy(start));
     CUDACHECK(cudaEventDestroy(stop));
 }
 
-void run_cudnn_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes, int argnum = 4) {
+void run_cudnn_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes,
+                    int argnum = 4) {
     CUDACHECK(cudaSetDevice(rank));
     auto arg = arg_list[argnum];
-    Conv conv(arg[0], arg[1], arg[2], arg[3], arg[4], arg[5], arg[6], arg[7]);
+    int batch_size = arg[0];
+    int C = arg[1];
+    int H = arg[2];
+    int W = arg[3];
+    int kernel_size = arg[4];
+    int K = arg[5];
+    int stride = arg[6];
+    int padding = arg[7];
+    Conv conv(C, K, H, W, batch_size, kernel_size, stride, padding);
 
     // nccl:
     // int N = 500000000;
@@ -140,15 +161,15 @@ void run_cudnn_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes, int ar
     CUDACHECK(cudaStreamWaitEvent(comm->getStream(), start, 0));
     CUDACHECK(cudaStreamWaitEvent(conv.getStream(), start1, 0));
     int times = 1000;
-    int effective = 400;
+    int effective = 100;
     for (int i = 0; i < times + 10; i++) {
-        if(i == 10) {
+        if (i == 10) {
             CUDACHECK(cudaEventRecord(start, conv.getStream()));
             CUDACHECK(cudaEventRecord(start1, comm->getStream()));
         }
         conv.forward();
         comm->allReduce(data, N / 4, ncclFloat32, ncclSum);
-        if(i == effective + 9) {
+        if (i == effective + 9) {
             CUDACHECK(cudaEventRecord(stop, conv.getStream()));
             CUDACHECK(cudaEventRecord(stop1, comm->getStream()));
         }
@@ -163,13 +184,12 @@ void run_cudnn_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes, int ar
     CUDACHECK(cudaEventDestroy(stop));
     CUDACHECK(cudaEventDestroy(start1));
     CUDACHECK(cudaEventDestroy(stop1));
-    std::cout << "overlap cudnn time: " << sum / effective << "ms" << std::endl;
     std::cout << "overlap nccl time: " << sum1 / effective << "ms" << std::endl;
+    std::cout << "overlap cudnn time: " << sum / effective << "ms" << std::endl;
 }
 
 // ./test <ip> <port> <rank>
 int main(int argc, char* argv[]) {
-
     assert(argc == 4);
 
     int nrank = 2;
@@ -179,13 +199,15 @@ int main(int argc, char* argv[]) {
 
     std::unique_ptr<Comm> comm =
             std::make_unique<Comm>(nrank, rank, rank, ip, port);
-    run_nccl(rank, comm, 500000000);
+
+    size_t nccl_nbytes = 100000000;
+    run_nccl(rank, comm, nccl_nbytes);
     cudaDeviceSynchronize();
     std::cout << std::endl;
     run_cudnn(rank);
     cudaDeviceSynchronize();
     std::cout << std::endl;
-    run_cudnn_nccl(rank, comm, 500000000);
+    run_cudnn_nccl(rank, comm, nccl_nbytes);
 
     cudaDeviceSynchronize();
     return 0;
