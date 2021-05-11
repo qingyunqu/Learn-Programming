@@ -31,11 +31,11 @@ public:
         this->m_stream = stream;
         srand((unsigned)time(NULL));
         auto format = CUDNN_TENSOR_NHWC;
-        checkCUDNN(cudnnCreate(&cudnn));
-        checkCUDNN(cudnnSetStream(cudnn, m_stream));
+        CUDNNCHECK(cudnnCreate(&cudnn));
+        CUDNNCHECK(cudnnSetStream(cudnn, m_stream));
         // input
-        checkCUDNN(cudnnCreateTensorDescriptor(&input_descriptor));
-        checkCUDNN(cudnnSetTensor4dDescriptor(input_descriptor,
+        CUDNNCHECK(cudnnCreateTensorDescriptor(&input_descriptor));
+        CUDNNCHECK(cudnnSetTensor4dDescriptor(input_descriptor,
                                               /*format=*/format,
                                               /*dataType=*/CUDNN_DATA_FLOAT,
                                               /*batch_size=*/batch_size,
@@ -45,8 +45,8 @@ public:
         // output
         size_t H_out = (H + 2 * padding - kernel_size) / stride + 1;
         size_t W_out = (W + 2 * padding - kernel_size) / stride + 1;
-        checkCUDNN(cudnnCreateTensorDescriptor(&output_descriptor));
-        checkCUDNN(cudnnSetTensor4dDescriptor(output_descriptor,
+        CUDNNCHECK(cudnnCreateTensorDescriptor(&output_descriptor));
+        CUDNNCHECK(cudnnSetTensor4dDescriptor(output_descriptor,
                                               /*format=*/format,
                                               /*dataType=*/CUDNN_DATA_FLOAT,
                                               /*batch_size=*/batch_size,
@@ -54,8 +54,8 @@ public:
                                               /*image_height=*/H_out,
                                               /*image_width=*/W_out));
         // filter
-        checkCUDNN(cudnnCreateFilterDescriptor(&kernel_descriptor));
-        checkCUDNN(cudnnSetFilter4dDescriptor(kernel_descriptor,
+        CUDNNCHECK(cudnnCreateFilterDescriptor(&kernel_descriptor));
+        CUDNNCHECK(cudnnSetFilter4dDescriptor(kernel_descriptor,
                                               /*dataType=*/CUDNN_DATA_FLOAT,
                                               /*format=*/format,
                                               /*out_channels=*/K,
@@ -63,8 +63,8 @@ public:
                                               /*kernel_height=*/kernel_size,
                                               /*kernel_width=*/kernel_size));
         // convolution
-        checkCUDNN(cudnnCreateConvolutionDescriptor(&convolution_descriptor));
-        checkCUDNN(cudnnSetConvolution2dDescriptor(
+        CUDNNCHECK(cudnnCreateConvolutionDescriptor(&convolution_descriptor));
+        CUDNNCHECK(cudnnSetConvolution2dDescriptor(
                 convolution_descriptor,
                 /*pad_height=*/padding,
                 /*pad_width=*/padding,
@@ -75,13 +75,13 @@ public:
                 /*mode=*/CUDNN_CROSS_CORRELATION,
                 /*computeType=*/CUDNN_DATA_FLOAT));
         // convolution forward
-        checkCUDNN(cudnnGetConvolutionForwardAlgorithm(
+        CUDNNCHECK(cudnnGetConvolutionForwardAlgorithm(
                 cudnn, input_descriptor, kernel_descriptor,
                 convolution_descriptor, output_descriptor,
                 CUDNN_CONVOLUTION_FWD_PREFER_FASTEST,
                 /*memoryLimitInBytes=*/0, &convolution_algorithm));
         // workspace size
-        checkCUDNN(cudnnGetConvolutionForwardWorkspaceSize(
+        CUDNNCHECK(cudnnGetConvolutionForwardWorkspaceSize(
                 cudnn, input_descriptor, kernel_descriptor,
                 convolution_descriptor, output_descriptor,
                 convolution_algorithm /*CUDNN_CONVOLUTION_FWD_ALGO_DIRECT*/,
@@ -123,7 +123,7 @@ public:
     }
 
     void forward() {
-        checkCUDNN(cudnnConvolutionForward(
+        CUDNNCHECK(cudnnConvolutionForward(
                 cudnn, &alpha, input_descriptor, d_input, kernel_descriptor,
                 d_filter, convolution_descriptor,
                 convolution_algorithm /*CUDNN_CONVOLUTION_FWD_ALGO_DIRECT*/,
@@ -148,12 +148,12 @@ public:
         CUDACHECK(cudaFree(d_filter));
         CUDACHECK(cudaFree(d_workspace));
 
-        checkCUDNN(cudnnDestroyTensorDescriptor(input_descriptor));
-        checkCUDNN(cudnnDestroyTensorDescriptor(output_descriptor));
-        checkCUDNN(cudnnDestroyFilterDescriptor(kernel_descriptor));
-        checkCUDNN(cudnnDestroyConvolutionDescriptor(convolution_descriptor));
+        CUDNNCHECK(cudnnDestroyTensorDescriptor(input_descriptor));
+        CUDNNCHECK(cudnnDestroyTensorDescriptor(output_descriptor));
+        CUDNNCHECK(cudnnDestroyFilterDescriptor(kernel_descriptor));
+        CUDNNCHECK(cudnnDestroyConvolutionDescriptor(convolution_descriptor));
 
-        checkCUDNN(cudnnDestroy(cudnn));
+        CUDNNCHECK(cudnnDestroy(cudnn));
 
         if (m_internl_stream) {
             CUDACHECK(cudaStreamDestroy(this->m_stream));

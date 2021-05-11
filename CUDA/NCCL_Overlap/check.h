@@ -20,7 +20,7 @@
         }                                                                 \
     } while (0)
 
-#define checkCUDNN(expression)                                     \
+#define CUDNNCHECK(expression)                                     \
     {                                                              \
         cudnnStatus_t status = (expression);                       \
         if (status != CUDNN_STATUS_SUCCESS) {                      \
@@ -29,3 +29,13 @@
             std::exit(EXIT_FAILURE);                               \
         }                                                          \
     }
+
+#define CUTLASS_CHECK(status)                                                                    \
+  {                                                                                              \
+    cutlass::Status error = status;                                                              \
+    if (error != cutlass::Status::kSuccess) {                                                    \
+      std::cerr << "Got cutlass error: " << cutlassGetStatusString(error) << " at: " << __LINE__ \
+                << std::endl;                                                                    \
+      exit(EXIT_FAILURE);                                                                        \
+    }                                                                                            \
+  }
