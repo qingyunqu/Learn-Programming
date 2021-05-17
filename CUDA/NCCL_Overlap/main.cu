@@ -7,37 +7,31 @@
 #include <unistd.h>
 #include "check.h"
 #include "comm.h"
-#include "cudnn_conv.h"
+// #include "cudnn_conv.h"
 
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
 #include "cutlass/util/host_tensor.h"
-#include "cutlass/util/reference/device/gemm.h"
-#include "cutlass/util/reference/host/tensor_compare.h"
-#include "cutlass/util/reference/host/tensor_copy.h"
-#include "cutlass/util/reference/host/tensor_fill.h"
-#include "cutlass/util/tensor_view_io.h"
 
-
-const int arg_list[][8] = {
-        {256, 256, 14, 14, 3, 512, 1, 1}, {1, 1024, 7, 7, 3, 1024, 1, 1},
-        {8, 1024, 7, 7, 3, 1024, 1, 1},   {64, 1024, 7, 7, 3, 1024, 1, 1},
-        {256, 1024, 7, 7, 3, 1024, 1, 1}, {1, 1024, 14, 14, 1, 512, 1, 0},
-        {1, 256, 28, 28, 3, 512, 1, 1},   {1, 512, 28, 28, 1, 256, 1, 0},
-        {1, 128, 56, 56, 3, 256, 1, 1},   {1, 192, 56, 56, 1, 128, 1, 0},
-        {1, 64, 112, 112, 3, 192, 1, 1},  {1, 3, 448, 448, 7, 64, 2, 3},
-        {1, 3, 448, 448, 7, 64, 2, 3},    {1, 64, 112, 112, 3, 192, 1, 1},
-        {1, 192, 56, 56, 1, 128, 1, 0},   {1, 128, 56, 56, 3, 256, 1, 1},
-        {1, 256, 56, 56, 1, 256, 1, 0},   {1, 256, 56, 56, 3, 512, 1, 1},
-        {1, 512, 28, 28, 1, 256, 1, 0},   {1, 256, 28, 28, 3, 512, 1, 1},
-        {1, 512, 28, 28, 1, 512, 1, 0},    // conv15      8
-        {1, 512, 28, 28, 3, 1024, 1, 1},   // conv16     9
-        {1, 1024, 14, 14, 1, 512, 1, 0},   // conv17    10
-        {1, 512, 14, 14, 3, 1024, 1, 1},   // conv18     11
-        {1, 1024, 14, 14, 3, 1024, 1, 1},  // conv21   12
-        {1, 1024, 14, 14, 3, 1024, 2, 1},  // conv22   13
-        {1, 1024, 7, 7, 3, 1024, 1, 1},    // conv23     14
-};
+// const int arg_list[][8] = {
+//         {256, 256, 14, 14, 3, 512, 1, 1}, {1, 1024, 7, 7, 3, 1024, 1, 1},
+//         {8, 1024, 7, 7, 3, 1024, 1, 1},   {64, 1024, 7, 7, 3, 1024, 1, 1},
+//         {256, 1024, 7, 7, 3, 1024, 1, 1}, {1, 1024, 14, 14, 1, 512, 1, 0},
+//         {1, 256, 28, 28, 3, 512, 1, 1},   {1, 512, 28, 28, 1, 256, 1, 0},
+//         {1, 128, 56, 56, 3, 256, 1, 1},   {1, 192, 56, 56, 1, 128, 1, 0},
+//         {1, 64, 112, 112, 3, 192, 1, 1},  {1, 3, 448, 448, 7, 64, 2, 3},
+//         {1, 3, 448, 448, 7, 64, 2, 3},    {1, 64, 112, 112, 3, 192, 1, 1},
+//         {1, 192, 56, 56, 1, 128, 1, 0},   {1, 128, 56, 56, 3, 256, 1, 1},
+//         {1, 256, 56, 56, 1, 256, 1, 0},   {1, 256, 56, 56, 3, 512, 1, 1},
+//         {1, 512, 28, 28, 1, 256, 1, 0},   {1, 256, 28, 28, 3, 512, 1, 1},
+//         {1, 512, 28, 28, 1, 512, 1, 0},    // conv15      8
+//         {1, 512, 28, 28, 3, 1024, 1, 1},   // conv16     9
+//         {1, 1024, 14, 14, 1, 512, 1, 0},   // conv17    10
+//         {1, 512, 14, 14, 3, 1024, 1, 1},   // conv18     11
+//         {1, 1024, 14, 14, 3, 1024, 1, 1},  // conv21   12
+//         {1, 1024, 14, 14, 3, 1024, 2, 1},  // conv22   13
+//         {1, 1024, 7, 7, 3, 1024, 1, 1},    // conv23     14
+// };
 
 /// Kernel to initialize a matrix with small integers.
 __global__ void InitializeMatrix_kernel(float* matrix, int ldm, int rows,
@@ -127,13 +121,28 @@ cudaError_t CutlassSgemmNN(int M, int N, int K, float alpha, float const* A,
 
     using ColumnMajor = cutlass::layout::ColumnMajor;
 
+    using ShapeMMAThreadBlock =
+            cutlass::gemm::GemmShape<32, 32, 32>;  // <- threadblock tile M =
+                                                    // 128, N = 128, K = 32
+    // This code section describes tile size a warp will compute
+    using ShapeMMAWarp =
+            cutlass::gemm::GemmShape<32, 32, 32>;  // <- warp tile M = 64, N = 64, K = 32
+    // This code section describes the size of MMA op
+    using ShapeMMAOp = cutlass::gemm::GemmShape<1, 1, 1>;  // <- MMA Op tile M =
+                                                           // 8, N = 8, K = 4
     using CutlassGemm =
-            cutlass::gemm::device::Gemm<float,         // Data-type of A matrix
-                                        ColumnMajor,   // Layout of A matrix
-                                        float,         // Data-type of B matrix
-                                        ColumnMajor,   // Layout of B matrix
-                                        float,         // Data-type of C matrix
-                                        ColumnMajor>;  // Layout of C matrix
+            cutlass::gemm::device::Gemm<float,        // Data-type of A matrix
+                                        ColumnMajor,  // Layout of A matrix
+                                        float,        // Data-type of B matrix
+                                        ColumnMajor,  // Layout of B matrix
+                                        float,        // Data-type of C matrix
+                                        ColumnMajor,  // Layout of C matrix
+                                        float,
+                                        cutlass::arch::OpClassSimt,
+                                        cutlass::arch::Sm70,
+                                        ShapeMMAThreadBlock,
+                                        ShapeMMAWarp,
+                                        ShapeMMAOp>;
 
     cutlass::device_memory::allocation<uint8_t> workspace(0);
     // Define a CUTLASS GEMM type
@@ -167,7 +176,6 @@ cudaError_t CutlassSgemmNN(int M, int N, int K, float alpha, float const* A,
 
     status = gemm_operator(s);
     CUTLASS_CHECK(status);
-
 
     // Return success, if no errors were encountered.
     return cudaSuccess;
@@ -235,104 +243,104 @@ void run_nccl_nccl(int rank, std::unique_ptr<Comm>& comm,
     cudaStreamSynchronize(comm1->getStream());
 }
 
-void run_cudnn(int rank, int argnum = 4) {
-    CUDACHECK(cudaSetDevice(rank));
-    auto arg = arg_list[argnum];
-    int batch_size = arg[0];
-    int C = arg[1];
-    int H = arg[2];
-    int W = arg[3];
-    int kernel_size = arg[4];
-    int K = arg[5];
-    int stride = arg[6];
-    int padding = arg[7];
-    Conv conv(C, K, H, W, batch_size, kernel_size, stride, padding);
+// void run_cudnn(int rank, int argnum = 4) {
+//     CUDACHECK(cudaSetDevice(rank));
+//     auto arg = arg_list[argnum];
+//     int batch_size = arg[0];
+//     int C = arg[1];
+//     int H = arg[2];
+//     int W = arg[3];
+//     int kernel_size = arg[4];
+//     int K = arg[5];
+//     int stride = arg[6];
+//     int padding = arg[7];
+//     Conv conv(C, K, H, W, batch_size, kernel_size, stride, padding);
 
-    cudaEvent_t start, stop;
-    CUDACHECK(cudaEventCreate(&start));
-    CUDACHECK(cudaEventCreate(&stop));
-    int times = 100;
-    int effective = 100;
-    for (int i = 0; i < times + 10; i++) {
-        if (i == 10) {
-            CUDACHECK(cudaEventRecord(start, conv.getStream()));
-        }
-        conv.forward();
-        if (i == effective + 9) {
-            CUDACHECK(cudaEventRecord(stop, conv.getStream()));
-        }
-    }
-    CUDACHECK(cudaEventSynchronize(stop));
-    float sum = 0.0;
-    CUDACHECK(cudaEventElapsedTime(&sum, start, stop));
+//     cudaEvent_t start, stop;
+//     CUDACHECK(cudaEventCreate(&start));
+//     CUDACHECK(cudaEventCreate(&stop));
+//     int times = 100;
+//     int effective = 100;
+//     for (int i = 0; i < times + 10; i++) {
+//         if (i == 10) {
+//             CUDACHECK(cudaEventRecord(start, conv.getStream()));
+//         }
+//         conv.forward();
+//         if (i == effective + 9) {
+//             CUDACHECK(cudaEventRecord(stop, conv.getStream()));
+//         }
+//     }
+//     CUDACHECK(cudaEventSynchronize(stop));
+//     float sum = 0.0;
+//     CUDACHECK(cudaEventElapsedTime(&sum, start, stop));
 
-    std::cout << "single cudnn: (" << arg[0] << "," << arg[1] << "," <<
-    arg[2]
-              << "," << arg[3] << "," << arg[4] << "," << arg[5] << ","
-              << arg[6] << "," << arg[7] << ")"
-              << " average time " << sum / effective << "ms" << std::endl;
-    CUDACHECK(cudaEventDestroy(start));
-    CUDACHECK(cudaEventDestroy(stop));
-}
+//     std::cout << "single cudnn: (" << arg[0] << "," << arg[1] << "," <<
+//     arg[2]
+//               << "," << arg[3] << "," << arg[4] << "," << arg[5] << ","
+//               << arg[6] << "," << arg[7] << ")"
+//               << " average time " << sum / effective << "ms" << std::endl;
+//     CUDACHECK(cudaEventDestroy(start));
+//     CUDACHECK(cudaEventDestroy(stop));
+// }
 
-void run_cudnn_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes,
-                    int argnum = 4) {
-    CUDACHECK(cudaSetDevice(rank));
-    auto arg = arg_list[argnum];
-    int batch_size = arg[0];
-    int C = arg[1];
-    int H = arg[2];
-    int W = arg[3];
-    int kernel_size = arg[4];
-    int K = arg[5];
-    int stride = arg[6];
-    int padding = arg[7];
-    Conv conv(C, K, H, W, batch_size, kernel_size, stride, padding);
+// void run_cudnn_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes,
+//                     int argnum = 4) {
+//     CUDACHECK(cudaSetDevice(rank));
+//     auto arg = arg_list[argnum];
+//     int batch_size = arg[0];
+//     int C = arg[1];
+//     int H = arg[2];
+//     int W = arg[3];
+//     int kernel_size = arg[4];
+//     int K = arg[5];
+//     int stride = arg[6];
+//     int padding = arg[7];
+//     Conv conv(C, K, H, W, batch_size, kernel_size, stride, padding);
 
-    // nccl:
-    // int N = 500000000;
-    size_t N = nbytes;
-    void* data = nullptr;
-    CUDACHECK(cudaMalloc(&data, N));
-    CUDACHECK(cudaMemsetAsync(data, 0, N, comm->getStream()));
+//     // nccl:
+//     // int N = 500000000;
+//     size_t N = nbytes;
+//     void* data = nullptr;
+//     CUDACHECK(cudaMalloc(&data, N));
+//     CUDACHECK(cudaMemsetAsync(data, 0, N, comm->getStream()));
 
-    cudaEvent_t start, stop, start1, stop1;
-    CUDACHECK(cudaEventCreate(&start));
-    CUDACHECK(cudaEventCreate(&stop));
-    CUDACHECK(cudaEventCreate(&start1));
-    CUDACHECK(cudaEventCreate(&stop1));
-    CUDACHECK(cudaEventRecord(start, conv.getStream()));
-    CUDACHECK(cudaEventRecord(start1, comm->getStream()));
-    CUDACHECK(cudaStreamWaitEvent(comm->getStream(), start, 0));
-    CUDACHECK(cudaStreamWaitEvent(conv.getStream(), start1, 0));
-    int times = 1000;
-    int effective = 100;
-    for (int i = 0; i < times + 10; i++) {
-        if (i == 10) {
-            CUDACHECK(cudaEventRecord(start, conv.getStream()));
-            CUDACHECK(cudaEventRecord(start1, comm->getStream()));
-        }
-        conv.forward();
-        comm->allReduce(data, N / 4, ncclFloat32, ncclSum);
-        if (i == effective + 9) {
-            CUDACHECK(cudaEventRecord(stop, conv.getStream()));
-            CUDACHECK(cudaEventRecord(stop1, comm->getStream()));
-        }
-    }
-    CUDACHECK(cudaEventSynchronize(stop));
-    CUDACHECK(cudaEventSynchronize(stop1));
-    float sum = 0.0, sum1 = 0.0;
-    CUDACHECK(cudaEventElapsedTime(&sum, start, stop));
-    CUDACHECK(cudaEventElapsedTime(&sum1, start1, stop1));
+//     cudaEvent_t start, stop, start1, stop1;
+//     CUDACHECK(cudaEventCreate(&start));
+//     CUDACHECK(cudaEventCreate(&stop));
+//     CUDACHECK(cudaEventCreate(&start1));
+//     CUDACHECK(cudaEventCreate(&stop1));
+//     CUDACHECK(cudaEventRecord(start, conv.getStream()));
+//     CUDACHECK(cudaEventRecord(start1, comm->getStream()));
+//     CUDACHECK(cudaStreamWaitEvent(comm->getStream(), start, 0));
+//     CUDACHECK(cudaStreamWaitEvent(conv.getStream(), start1, 0));
+//     int times = 1000;
+//     int effective = 100;
+//     for (int i = 0; i < times + 10; i++) {
+//         if (i == 10) {
+//             CUDACHECK(cudaEventRecord(start, conv.getStream()));
+//             CUDACHECK(cudaEventRecord(start1, comm->getStream()));
+//         }
+//         conv.forward();
+//         comm->allReduce(data, N / 4, ncclFloat32, ncclSum);
+//         if (i == effective + 9) {
+//             CUDACHECK(cudaEventRecord(stop, conv.getStream()));
+//             CUDACHECK(cudaEventRecord(stop1, comm->getStream()));
+//         }
+//     }
+//     CUDACHECK(cudaEventSynchronize(stop));
+//     CUDACHECK(cudaEventSynchronize(stop1));
+//     float sum = 0.0, sum1 = 0.0;
+//     CUDACHECK(cudaEventElapsedTime(&sum, start, stop));
+//     CUDACHECK(cudaEventElapsedTime(&sum1, start1, stop1));
 
-    CUDACHECK(cudaEventDestroy(start));
-    CUDACHECK(cudaEventDestroy(stop));
-    CUDACHECK(cudaEventDestroy(start1));
-    CUDACHECK(cudaEventDestroy(stop1));
-    std::cout << "overlap nccl time: " << sum1 / effective << "ms" <<
-    std::endl; std::cout << "overlap cudnn time: " << sum / effective << "ms"
-    << std::endl;
-}
+//     CUDACHECK(cudaEventDestroy(start));
+//     CUDACHECK(cudaEventDestroy(stop));
+//     CUDACHECK(cudaEventDestroy(start1));
+//     CUDACHECK(cudaEventDestroy(stop1));
+//     std::cout << "overlap nccl time: " << sum1 / effective << "ms" <<
+//     std::endl; std::cout << "overlap cudnn time: " << sum / effective << "ms"
+//     << std::endl;
+// }
 
 void run_cutlass(int rank, int M = 1024, int N = 1024, int K = 1024) {
     CUDACHECK(cudaSetDevice(rank));
@@ -358,7 +366,8 @@ void run_cutlass(int rank, int M = 1024, int N = 1024, int K = 1024) {
         if (i == 10) {
             CUDACHECK(cudaEventRecord(start, stream));
         }
-        CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, stream);
+        CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc,
+                       stream);
         if (i == effective + 9) {
             CUDACHECK(cudaEventRecord(stop, stream));
         }
@@ -373,7 +382,8 @@ void run_cutlass(int rank, int M = 1024, int N = 1024, int K = 1024) {
     CUDACHECK(cudaEventDestroy(stop));
 }
 
-void run_cutlass_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes, int M = 1024, int N = 1024, int K = 1024) {
+void run_cutlass_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes,
+                      int M = 1024, int N = 1024, int K = 1024) {
     CUDACHECK(cudaSetDevice(rank));
     cudaStream_t stream = (cudaStream_t)0;
     CUDACHECK(cudaStreamCreate(&stream));
@@ -409,7 +419,8 @@ void run_cutlass_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes, int 
             CUDACHECK(cudaEventRecord(start, stream));
             CUDACHECK(cudaEventRecord(start1, comm->getStream()));
         }
-        CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc, stream);
+        CutlassSgemmNN(M, N, K, alpha, A, lda, B, ldb, beta, C_cutlass, ldc,
+                       stream);
         comm->allReduce(data, nbytes / 4, ncclFloat32, ncclSum);
         if (i == effective + 9) {
             CUDACHECK(cudaEventRecord(stop, stream));
@@ -434,6 +445,7 @@ void run_cutlass_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes, int 
 // ./test <ip> <port> <rank>
 int main(int argc, char* argv[]) {
     //run_cutlass(0);
+    //cudaDeviceSynchronize();
     assert(argc == 4);
 
     int nrank = 2;
@@ -448,13 +460,14 @@ int main(int argc, char* argv[]) {
     run_nccl(rank, comm, nccl_nbytes);
     cudaDeviceSynchronize();
     std::cout << std::endl;
-    run_cudnn(rank);
-    // run_cutlass(rank);
+
+    // run_cudnn(rank);
+    run_cutlass(rank);
     cudaDeviceSynchronize();
     std::cout << std::endl;
-    run_cudnn_nccl(rank, comm, nccl_nbytes);
-    //run_cutlass_nccl(rank, comm, nccl_nbytes);
 
+    // run_cudnn_nccl(rank, comm, nccl_nbytes);
+    run_cutlass_nccl(rank, comm, nccl_nbytes);
     cudaDeviceSynchronize();
     return 0;
 }
