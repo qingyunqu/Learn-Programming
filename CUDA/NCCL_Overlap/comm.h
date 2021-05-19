@@ -64,7 +64,9 @@ public:
     Comm(int nrank, int rank, int device, const char* ip_addr,
          unsigned short port) {
         CUDACHECK(cudaSetDevice(device));
-        CUDACHECK(cudaStreamCreate(&this->m_stream));
+        int leastPriority, greatestPriority;
+        CUDACHECK(cudaDeviceGetStreamPriorityRange(&leastPriority, &greatestPriority));
+        CUDACHECK(cudaStreamCreateWithPriority(&this->m_stream, cudaStreamNonBlocking, greatestPriority));
         this->m_rank = rank;
         this->m_nrank = nrank;
         this->m_device = device;

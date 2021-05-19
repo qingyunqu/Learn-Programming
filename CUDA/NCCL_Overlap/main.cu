@@ -122,7 +122,7 @@ cudaError_t CutlassSgemmNN(int M, int N, int K, float alpha, float const* A,
     using ColumnMajor = cutlass::layout::ColumnMajor;
 
     using ShapeMMAThreadBlock =
-            cutlass::gemm::GemmShape<32, 32, 32>;  // <- threadblock tile M =
+            cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M =
                                                     // 128, N = 128, K = 32
     // This code section describes tile size a warp will compute
     using ShapeMMAWarp =
@@ -216,19 +216,18 @@ void run_nccl(int rank, std::unique_ptr<Comm>& comm, size_t nbytes) {
 }
 
 void run_nccl_nccl(int rank, std::unique_ptr<Comm>& comm,
-                   std::unique_ptr<Comm>& comm1) {
+                   std::unique_ptr<Comm>& comm1, size_t nbytes) {
     CUDACHECK(cudaSetDevice(rank));
-    int N = 500000000;
     cudaEvent_t start, start1;
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&start1));
 
     void* data = nullptr;
-    CUDACHECK(cudaMalloc(&data, N));
-    CUDACHECK(cudaMemsetAsync(data, 0, N, comm->getStream()));
+    CUDACHECK(cudaMalloc(&data, nbytes));
+    CUDACHECK(cudaMemsetAsync(data, 0, nbytes, comm->getStream()));
     void* data1 = nullptr;
-    CUDACHECK(cudaMalloc(&data1, N));
-    CUDACHECK(cudaMemsetAsync(data1, 0, N, comm1->getStream()));
+    CUDACHECK(cudaMalloc(&data1, nbytes));
+    CUDACHECK(cudaMemsetAsync(data1, 0, nbytes, comm1->getStream()));
 
     int times = 1000;
     CUDACHECK(cudaEventRecord(start, comm->getStream()));
@@ -236,8 +235,8 @@ void run_nccl_nccl(int rank, std::unique_ptr<Comm>& comm,
     CUDACHECK(cudaStreamWaitEvent(comm->getStream(), start1, 0));
     CUDACHECK(cudaStreamWaitEvent(comm1->getStream(), start1, 0));
     for (int i = 0; i < times + 10; i++) {
-        comm->allReduce(data, N, ncclInt8, ncclSum);
-        comm1->allReduce(data, N, ncclInt8, ncclSum);
+        comm->allReduce(data, nbytes, ncclInt8, ncclSum);
+        comm1->allReduce(data, nbytes, ncclInt8, ncclSum);
     }
     cudaStreamSynchronize(comm->getStream());
     cudaStreamSynchronize(comm1->getStream());
