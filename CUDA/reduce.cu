@@ -5,8 +5,8 @@
 #include <cuda_runtime.h>
 
 template <typename T>
-__global__ void reduce_sum_version_0(T* src, T* dst, int M, int N) {
-    T* src_ptr = src + blockIdx.x * N;
+__global__ void reduce_sum_version_0(const T* src, T* dst, int M, int N) {
+    const T* src_ptr = src + blockIdx.x * N;
     dst[blockIdx.x] = static_cast<T>(0);
     for (int i = 0; i < N; i++) {
         dst[blockIdx.x] += src_ptr[i];
@@ -15,18 +15,20 @@ __global__ void reduce_sum_version_0(T* src, T* dst, int M, int N) {
 
 #define BLOCK_SIZE 32
 template <typename T>
-__global void reduce_sum_version_1(T* src, T* dst, int M, int N) {
-    T* src_ptr = src + blockIdx.x * N + threadIdx.x * BLOCK_SIZE;
-    for(int i = 1; i < BLOCK_SIZE && threadIdx.x * BLOCK_SIZE + i < N; i++) {
-        // using src as buffer
-        src_ptr[0] += src_ptr[i];
+__global__ void reduce_sum_version_1(const T* src, T* dst, T* buffer, int M,
+                                     int N) {
+    const T* src_ptr = src + blockIdx.x * N + threadIdx.x * BLOCK_SIZE;
+    T* buffer_ptr = buffer + blockIdx.x * blockDim.x + threadIdx.x;
+    *buffer_ptr = static_cast<T>(0);
+    for (int i = 0; i < BLOCK_SIZE && threadIdx.x * BLOCK_SIZE + i < N; i++) {
+        *buffer_ptr += src_ptr[i];
     }
     __syncthreads();
-    if(threadIdx.x == 0) {
-        src_ptr = src + blockIdx.x * N;
+    if (threadIdx.x == 0) {
         dst[blockIdx.x] = static_cast<T>(0);
-        for(int i = 0; i < (N + BLOCK_SIZE - 1) / BLOCK_SIZE; i++) {
-            dst[blockIdx.x] += src_ptr[]
+        buffer_ptr = buffer + blockIdx.x * blockDim.x;
+        for (int i = 0; i < blockDim.x; i++) {
+            dst[blockIdx.x] += buffer_ptr[i];
         }
     }
 }
@@ -35,7 +37,7 @@ int* init_host_input(int M, int N) {
     int* host_input = (int*)malloc(sizeof(int) * M * N);
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            host_input[i * N + j] = rand();
+            host_input[i * N + j] = rand() % 1000;
         }
     }
     return host_input;
@@ -66,8 +68,10 @@ int main(int argc, char* argv[]) {
     host_reduce_sum(host_input, host_output, M, N);
 
     int *device_input = nullptr, *device_output = nullptr;
+    int* device_buffer = nullptr;
     cudaMalloc(&device_input, sizeof(int) * M * N);
     cudaMalloc(&device_output, sizeof(int) * M);
+    cudaMalloc(&device_buffer, sizeof(int) * M * N);
     cudaMemcpy(device_input, host_input, sizeof(int) * M * N,
                cudaMemcpyHostToDevice);
 
@@ -85,7 +89,7 @@ int main(int argc, char* argv[]) {
             case 1:
                 reduce_sum_version_1<int>
                         <<<M, (N + BLOCK_SIZE - 1) / BLOCK_SIZE>>>(
-                                device_input, device_output, M, N);
+                                device_input, device_output, device_buffer, M, N);
                 break;
             default:
                 break;
@@ -103,7 +107,7 @@ int main(int argc, char* argv[]) {
                cudaMemcpyDeviceToHost);
     for (int i = 0; i < M; i++) {
         if (host_device_output[i] != host_output[i]) {
-            printf("index: %d, not equal %d <-> %d", host_output[i],
+            printf("index: %d, not equal %d <-> %d\n", host_output[i],
                    host_device_output[i]);
             break;
         }
@@ -114,6 +118,7 @@ int main(int argc, char* argv[]) {
     cudaEventDestroy(end);
     cudaFree(device_input);
     cudaFree(device_output);
+    cudaFree(device_buffer);
     free(host_input);
     free(host_output);
     return 0;
