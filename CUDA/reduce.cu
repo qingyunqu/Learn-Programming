@@ -13,6 +13,24 @@ __global__ void reduce_sum_version_0(T* src, T* dst, int M, int N) {
     }
 }
 
+#define BLOCK_SIZE 32
+template <typename T>
+__global void reduce_sum_version_1(T* src, T* dst, int M, int N) {
+    T* src_ptr = src + blockIdx.x * N + threadIdx.x * BLOCK_SIZE;
+    for(int i = 1; i < BLOCK_SIZE && threadIdx.x * BLOCK_SIZE + i < N; i++) {
+        // using src as buffer
+        src_ptr[0] += src_ptr[i];
+    }
+    __syncthreads();
+    if(threadIdx.x == 0) {
+        src_ptr = src + blockIdx.x * N;
+        dst[blockIdx.x] = static_cast<T>(0);
+        for(int i = 0; i < (N + BLOCK_SIZE - 1) / BLOCK_SIZE; i++) {
+            dst[blockIdx.x] += src_ptr[]
+        }
+    }
+}
+
 int* init_host_input(int M, int N) {
     int* host_input = (int*)malloc(sizeof(int) * M * N);
     for (int i = 0; i < M; i++) {
@@ -47,7 +65,7 @@ int main(int argc, char* argv[]) {
     int* host_output = (int*)malloc(sizeof(int) * M);
     host_reduce_sum(host_input, host_output, M, N);
 
-    int *device_input = nullptr, device_output = nullptr;
+    int *device_input = nullptr, *device_output = nullptr;
     cudaMalloc(&device_input, sizeof(int) * M * N);
     cudaMalloc(&device_output, sizeof(int) * M);
     cudaMemcpy(device_input, host_input, sizeof(int) * M * N,
@@ -58,11 +76,16 @@ int main(int argc, char* argv[]) {
     cudaEventCreate(&end);
     int times = 1000;
     cudaEventRecord(start, (cudaStream_t)0);
-    for (int i = 0; i < time; i++) {
+    for (int i = 0; i < times; i++) {
         switch (kernel_id) {
             case 0:
                 reduce_sum_version_0<int>
                         <<<M, 1>>>(device_input, device_output, M, N);
+                break;
+            case 1:
+                reduce_sum_version_1<int>
+                        <<<M, (N + BLOCK_SIZE - 1) / BLOCK_SIZE>>>(
+                                device_input, device_output, M, N);
                 break;
             default:
                 break;
