@@ -13,7 +13,7 @@ __global__ void reduce_sum_version_0(const T* src, T* dst, int M, int N) {
     }
 }
 
-#define BLOCK_SIZE 32
+#define BLOCK_SIZE 1024
 template <typename T>
 __global__ void reduce_sum_version_1(const T* src, T* dst, T* buffer, int M,
                                      int N) {
@@ -29,6 +29,23 @@ __global__ void reduce_sum_version_1(const T* src, T* dst, T* buffer, int M,
         buffer_ptr = buffer + blockIdx.x * blockDim.x;
         for (int i = 0; i < blockDim.x; i++) {
             dst[blockIdx.x] += buffer_ptr[i];
+        }
+    }
+}
+
+template <typename T>
+__global__ void reduce_sum_version_2(const T* src, T* dst, int M, int N) {
+    extern __shared__ T buffer[];
+    const T* src_ptr = src + blockIdx.x * N + threadIdx.x * BLOCK_SIZE;
+    buffer[threadIdx.x] = static_cast<T>(0);
+    for (int i = 0; i < BLOCK_SIZE && threadIdx.x * BLOCK_SIZE + i < N; i++) {
+        buffer[threadIdx.x] += src_ptr[i];
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        dst[blockIdx.x] = static_cast<T>(0);
+        for (int i = 0; i < blockDim.x; i++) {
+            dst[blockIdx.x] += buffer[i];
         }
     }
 }
@@ -89,8 +106,16 @@ int main(int argc, char* argv[]) {
             case 1:
                 reduce_sum_version_1<int>
                         <<<M, (N + BLOCK_SIZE - 1) / BLOCK_SIZE>>>(
-                                device_input, device_output, device_buffer, M, N);
+                                device_input, device_output, device_buffer, M,
+                                N);
                 break;
+            case 2: {
+                int threads = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                reduce_sum_version_2<int>
+                        <<<M, threads, sizeof(int) * threads>>>(
+                                device_input, device_output, M, N);
+                break;
+            }
             default:
                 break;
         }
