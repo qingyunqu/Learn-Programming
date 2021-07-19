@@ -7,7 +7,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/unistd.h>
-#include "check.h"
+#include "../check.h"
 
 class Comm {
 private:

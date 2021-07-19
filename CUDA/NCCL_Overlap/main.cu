@@ -5,102 +5,10 @@
 
 #include <cuda_runtime.h>
 #include <unistd.h>
-#include "check.h"
+#include "../check.h"
 #include "comm.h"
 // #include "cudnn_conv.h"
-
-#include "cutlass/cutlass.h"
-#include "cutlass/gemm/device/gemm.h"
-#include "cutlass/util/host_tensor.h"
-
-// const int arg_list[][8] = {
-//         {256, 256, 14, 14, 3, 512, 1, 1}, {1, 1024, 7, 7, 3, 1024, 1, 1},
-//         {8, 1024, 7, 7, 3, 1024, 1, 1},   {64, 1024, 7, 7, 3, 1024, 1, 1},
-//         {256, 1024, 7, 7, 3, 1024, 1, 1}, {1, 1024, 14, 14, 1, 512, 1, 0},
-//         {1, 256, 28, 28, 3, 512, 1, 1},   {1, 512, 28, 28, 1, 256, 1, 0},
-//         {1, 128, 56, 56, 3, 256, 1, 1},   {1, 192, 56, 56, 1, 128, 1, 0},
-//         {1, 64, 112, 112, 3, 192, 1, 1},  {1, 3, 448, 448, 7, 64, 2, 3},
-//         {1, 3, 448, 448, 7, 64, 2, 3},    {1, 64, 112, 112, 3, 192, 1, 1},
-//         {1, 192, 56, 56, 1, 128, 1, 0},   {1, 128, 56, 56, 3, 256, 1, 1},
-//         {1, 256, 56, 56, 1, 256, 1, 0},   {1, 256, 56, 56, 3, 512, 1, 1},
-//         {1, 512, 28, 28, 1, 256, 1, 0},   {1, 256, 28, 28, 3, 512, 1, 1},
-//         {1, 512, 28, 28, 1, 512, 1, 0},    // conv15      8
-//         {1, 512, 28, 28, 3, 1024, 1, 1},   // conv16     9
-//         {1, 1024, 14, 14, 1, 512, 1, 0},   // conv17    10
-//         {1, 512, 14, 14, 3, 1024, 1, 1},   // conv18     11
-//         {1, 1024, 14, 14, 3, 1024, 1, 1},  // conv21   12
-//         {1, 1024, 14, 14, 3, 1024, 2, 1},  // conv22   13
-//         {1, 1024, 7, 7, 3, 1024, 1, 1},    // conv23     14
-// };
-
-/// Kernel to initialize a matrix with small integers.
-__global__ void InitializeMatrix_kernel(float* matrix, int ldm, int rows,
-                                        int columns, int seed = 0) {
-    int i = threadIdx.x + blockIdx.x * blockDim.x;
-    int j = threadIdx.y + blockIdx.y * blockDim.y;
-
-    if (i < rows && j < columns) {
-        int offset = i + j * ldm;
-
-        // Generate arbitrary elements.
-        int const k = 16807;
-        int const m = 16;
-        float value = float(((offset + seed) * k % m) - m / 2);
-
-        matrix[offset] = value;
-    }
-}
-
-/// Simple function to initialize a matrix to arbitrary small integers.
-cudaError_t InitializeMatrix(float* matrix, int ldm, int rows, int columns,
-                             int seed = 0, cudaStream_t s = (cudaStream_t)0) {
-    dim3 block(16, 16);
-    dim3 grid((rows + block.x - 1) / block.x,
-              (columns + block.y - 1) / block.y);
-
-    InitializeMatrix_kernel<<<grid, block, 0, s>>>(matrix, ldm, rows, columns,
-                                                   seed);
-
-    return cudaGetLastError();
-}
-
-/// Allocates device memory for a matrix then fills with arbitrary small
-/// integers.
-cudaError_t AllocateMatrix(float** matrix, int ldm, int rows, int columns,
-                           int seed = 0, cudaStream_t s = (cudaStream_t)0) {
-    cudaError_t result;
-
-    size_t sizeof_matrix = sizeof(float) * ldm * columns;
-
-    // Allocate device memory.
-    result = cudaMalloc(reinterpret_cast<void**>(matrix), sizeof_matrix);
-
-    if (result != cudaSuccess) {
-        std::cerr << "Failed to allocate matrix: " << cudaGetErrorString(result)
-                  << std::endl;
-        return result;
-    }
-
-    // Clear the allocation.
-    result = cudaMemsetAsync(*matrix, 0, sizeof_matrix, s);
-
-    if (result != cudaSuccess) {
-        std::cerr << "Failed to clear matrix device memory: "
-                  << cudaGetErrorString(result) << std::endl;
-        return result;
-    }
-
-    // Initialize matrix elements to arbitrary small integers.
-    result = InitializeMatrix(*matrix, ldm, rows, columns, seed, s);
-
-    if (result != cudaSuccess) {
-        std::cerr << "Failed to initialize matrix: "
-                  << cudaGetErrorString(result) << std::endl;
-        return result;
-    }
-
-    return result;
-}
+#include "cutlass_matmul.h"
 
 cudaError_t CutlassSgemmNN(int M, int N, int K, float alpha, float const* A,
                            int lda, float const* B, int ldb, float beta,
@@ -122,7 +30,7 @@ cudaError_t CutlassSgemmNN(int M, int N, int K, float alpha, float const* A,
     using ColumnMajor = cutlass::layout::ColumnMajor;
 
     using ShapeMMAThreadBlock =
-            cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M =
+            cutlass::gemm::GemmShape<32, 32, 32>;  // <- threadblock tile M =
                                                     // 128, N = 128, K = 32
     // This code section describes tile size a warp will compute
     using ShapeMMAWarp =
