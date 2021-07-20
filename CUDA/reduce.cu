@@ -3,9 +3,10 @@
 #include <cstdlib>
 
 #include <cuda_runtime.h>
+#include "check.h"
 
 template <typename T>
-__global__ void reduce_sum_version_0(const T* src, T* dst, int M, int N) {
+__global__ void reduce_sum_naive(const T* src, T* dst, int M, int N) {
     const T* src_ptr = src + blockIdx.x * N;
     dst[blockIdx.x] = static_cast<T>(0);
     for (int i = 0; i < N; i++) {
@@ -13,37 +14,82 @@ __global__ void reduce_sum_version_0(const T* src, T* dst, int M, int N) {
     }
 }
 
-#define BLOCK_SIZE 1024
 template <typename T>
-__global__ void reduce_sum_version_1(const T* src, T* dst, T* buffer, int M,
-                                     int N) {
-    const T* src_ptr = src + blockIdx.x * N + threadIdx.x * BLOCK_SIZE;
-    T* buffer_ptr = buffer + blockIdx.x * blockDim.x + threadIdx.x;
-    *buffer_ptr = static_cast<T>(0);
-    for (int i = 0; i < BLOCK_SIZE && threadIdx.x * BLOCK_SIZE + i < N; i++) {
-        *buffer_ptr += src_ptr[i];
-    }
-    __syncthreads();
-    if (threadIdx.x == 0) {
-        dst[blockIdx.x] = static_cast<T>(0);
-        buffer_ptr = buffer + blockIdx.x * blockDim.x;
-        for (int i = 0; i < blockDim.x; i++) {
-            dst[blockIdx.x] += buffer_ptr[i];
+__global__ void reduce_sum_version_0(const T* src, T* dst, int M, int N) {
+    // every block has 1024 threads
+    const int ELEMENTS_PER_THREAD = (N + blockDim.x - 1) / blockDim.x;
+    const T* src_ptr = src + blockIdx.x * N;
+    for (int i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        int index = threadIdx.x + i * blockDim.x;
+        if (index < N) {
+            atomicAdd(&dst[blockIdx.x], src_ptr[index]);
         }
     }
 }
 
 template <typename T>
-__global__ void reduce_sum_version_2(const T* src, T* dst, int M, int N) {
+__global__ void reduce_sum_version_1(const T* src, T* dst, int M, int N) {
     extern __shared__ T buffer[];
-    const T* src_ptr = src + blockIdx.x * N + threadIdx.x * BLOCK_SIZE;
-    buffer[threadIdx.x] = static_cast<T>(0);
-    for (int i = 0; i < BLOCK_SIZE && threadIdx.x * BLOCK_SIZE + i < N; i++) {
-        buffer[threadIdx.x] += src_ptr[i];
+    *buffer = 0;
+    __syncthreads();
+    // every block has 1024 threads
+    const int ELEMENTS_PER_THREAD = (N + blockDim.x - 1) / blockDim.x;
+    const T* src_ptr = src + blockIdx.x * N;
+    for (int i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        int index = threadIdx.x + i * blockDim.x;
+        if (index < N) {
+            atomicAdd(buffer, src_ptr[index]);
+        }
     }
     __syncthreads();
     if (threadIdx.x == 0) {
-        dst[blockIdx.x] = static_cast<T>(0);
+        dst[blockIdx.x] = *buffer;
+    }
+}
+
+#define BUFFER_SIZE 32
+template <typename T>
+__global__ void reduce_sum_version_2(const T* src, T* dst, int M, int N) {
+    extern __shared__ T buffer[];
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < BUFFER_SIZE; i++) {
+            buffer[i] = 0;
+        }
+    }
+    __syncthreads();
+    const int ELEMENTS_PER_THREAD = (N + blockDim.x - 1) / blockDim.x;
+    const T* src_ptr = src + blockIdx.x * N;
+    for (int i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        int index = threadIdx.x + i * blockDim.x;
+        if (index < N) {
+            int buffer_index = index % BUFFER_SIZE;
+            atomicAdd(&buffer[buffer_index], src_ptr[index]);
+        }
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
+        for (int i = 0; i < BUFFER_SIZE; i++) {
+            dst[blockIdx.x] += buffer[i];
+        }
+    }
+}
+
+template <typename T>
+__global__ void reduce_sum_version_3(const T* src, T* dst, int M, int N) {
+    extern __shared__ T buffer[];
+    const int ELEMENTS_PER_THREAD = (N + blockDim.x - 1) / blockDim.x;
+    const T* src_ptr = src + blockIdx.x * N;
+    for (int i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        if (i == 0) {
+            buffer[threadIdx.x] = 0;
+        }
+        int index = threadIdx.x + i * blockDim.x;
+        if (index < N) {
+            buffer[threadIdx.x] += src_ptr[index];
+        }
+    }
+    __syncthreads();
+    if (threadIdx.x == 0) {
         for (int i = 0; i < blockDim.x; i++) {
             dst[blockIdx.x] += buffer[i];
         }
@@ -80,47 +126,70 @@ int main(int argc, char* argv[]) {
     int N = atoi(argv[2]);
     int kernel_id = atoi(argv[3]);
 
+    cudaStream_t stream;
+    CUDACHECK(cudaStreamCreate(&stream));
     int* host_input = init_host_input(M, N);
     int* host_output = (int*)malloc(sizeof(int) * M);
     host_reduce_sum(host_input, host_output, M, N);
 
     int *device_input = nullptr, *device_output = nullptr;
     int* device_buffer = nullptr;
-    cudaMalloc(&device_input, sizeof(int) * M * N);
-    cudaMalloc(&device_output, sizeof(int) * M);
-    cudaMalloc(&device_buffer, sizeof(int) * M * N);
-    cudaMemcpy(device_input, host_input, sizeof(int) * M * N,
-               cudaMemcpyHostToDevice);
+    CUDACHECK(cudaMalloc(&device_input, sizeof(int) * M * N));
+    CUDACHECK(cudaMalloc(&device_output, sizeof(int) * M));
+    CUDACHECK(cudaMalloc(&device_buffer, sizeof(int) * M * N));
+    CUDACHECK(cudaMemcpyAsync(device_input, host_input, sizeof(int) * M * N,
+                              cudaMemcpyHostToDevice, stream));
 
     cudaEvent_t start, end;
     cudaEventCreate(&start);
     cudaEventCreate(&end);
     int times = 1000;
-    cudaEventRecord(start, (cudaStream_t)0);
+    cudaEventRecord(start, stream);
     for (int i = 0; i < times; i++) {
+        CUDACHECK(cudaMemsetAsync(device_output, 0, sizeof(int) * M, stream));
         switch (kernel_id) {
-            case 0:
-                reduce_sum_version_0<int>
+            case -1: {
+                reduce_sum_naive<int>
                         <<<M, 1>>>(device_input, device_output, M, N);
+                after_kernel_launch();
                 break;
-            case 1:
-                reduce_sum_version_1<int>
-                        <<<M, (N + BLOCK_SIZE - 1) / BLOCK_SIZE>>>(
-                                device_input, device_output, device_buffer, M,
-                                N);
+            }
+            case 0: {
+#define MAX_BLOCK_THREADS 1024
+                int threads = MAX_BLOCK_THREADS;
+                reduce_sum_version_0<int><<<M, threads, 0, stream>>>(
+                        device_input, device_output, M, N);
+                after_kernel_launch();
                 break;
+            }
+            case 1: {
+                int threads = MAX_BLOCK_THREADS;
+                reduce_sum_version_1<int><<<M, threads, sizeof(int), stream>>>(
+                        device_input, device_output, M, N);
+                after_kernel_launch();
+                break;
+            }
             case 2: {
-                int threads = (N + BLOCK_SIZE - 1) / BLOCK_SIZE;
+                int threads = MAX_BLOCK_THREADS;
                 reduce_sum_version_2<int>
-                        <<<M, threads, sizeof(int) * threads>>>(
+                        <<<M, threads, sizeof(int) * BUFFER_SIZE, stream>>>(
                                 device_input, device_output, M, N);
+                after_kernel_launch();
+                break;
+            }
+            case 3: {
+                int threads = MAX_BLOCK_THREADS;
+                reduce_sum_version_3<int>
+                        <<<M, threads, sizeof(int) * MAX_BLOCK_THREADS, stream>>>(
+                                device_input, device_output, M, N);
+                after_kernel_launch();
                 break;
             }
             default:
                 break;
         }
     }
-    cudaEventRecord(end, (cudaStream_t)0);
+    cudaEventRecord(end, stream);
     cudaEventSynchronize(end);
     float time = 0.f;
     cudaEventElapsedTime(&time, start, end);
@@ -128,11 +197,11 @@ int main(int argc, char* argv[]) {
            time / times);
 
     int* host_device_output = (int*)malloc(sizeof(int) * M);
-    cudaMemcpy(host_device_output, device_output, sizeof(int) * M,
-               cudaMemcpyDeviceToHost);
+    CUDACHECK(cudaMemcpy(host_device_output, device_output, sizeof(int) * M,
+                         cudaMemcpyDeviceToHost));
     for (int i = 0; i < M; i++) {
         if (host_device_output[i] != host_output[i]) {
-            printf("index: %d, not equal %d <-> %d\n", host_output[i],
+            printf("index: %d, not equal %d <-> %d\n", i, host_output[i],
                    host_device_output[i]);
             break;
         }
@@ -144,6 +213,7 @@ int main(int argc, char* argv[]) {
     cudaFree(device_input);
     cudaFree(device_output);
     cudaFree(device_buffer);
+    cudaStreamDestroy(stream);
     free(host_input);
     free(host_output);
     return 0;

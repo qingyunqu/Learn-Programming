@@ -39,3 +39,8 @@
       exit(EXIT_FAILURE);                                                                        \
     }                                                                                            \
   }
+
+#define after_kernel_launch()           \
+    do {                                \
+        CUDACHECK(cudaGetLastError());  \
+    } while (0)
