@@ -3,6 +3,7 @@
 #include <cstdlib>
 
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 #include "check.h"
 
 template <typename T>
@@ -96,6 +97,26 @@ __global__ void reduce_sum_version_3(const T* src, T* dst, int M, int N) {
     }
 }
 
+#define WARP_SIZE 32
+template <typename T>
+__global__ void reduce_sum_version_4(const T* src, T* dst, int M, int N) {
+    const int ELEMENTS_PER_THREAD = (N + blockDim.x - 1) / blockDim.x;
+    const T* src_ptr = src + blockIdx.x * N;
+    for (int i = 0; i < ELEMENTS_PER_THREAD; i++) {
+        int index = threadIdx.x + i * blockDim.x;
+        unsigned mask = __ballot_sync(0xffffffff, index < N);
+        if (index < N) {
+            T val = src_ptr[index];
+            for (int offset = 16; offset > 0; offset /= 2) {
+                val += __shfl_down_sync(mask, val, offset);
+            }
+            if (index % WARP_SIZE == 0) {
+                atomicAdd(&dst[blockIdx.x], val);
+            }
+        }
+    }
+}
+
 int* init_host_input(int M, int N) {
     int* host_input = (int*)malloc(sizeof(int) * M * N);
     for (int i = 0; i < M; i++) {
@@ -180,8 +201,15 @@ int main(int argc, char* argv[]) {
             case 3: {
                 int threads = MAX_BLOCK_THREADS;
                 reduce_sum_version_3<int>
-                        <<<M, threads, sizeof(int) * MAX_BLOCK_THREADS, stream>>>(
-                                device_input, device_output, M, N);
+                        <<<M, threads, sizeof(int) * MAX_BLOCK_THREADS,
+                           stream>>>(device_input, device_output, M, N);
+                after_kernel_launch();
+                break;
+            }
+            case 4: {
+                int threads = MAX_BLOCK_THREADS;
+                reduce_sum_version_4<int><<<M, threads, 0, stream>>>(
+                        device_input, device_output, M, N);
                 after_kernel_launch();
                 break;
             }
