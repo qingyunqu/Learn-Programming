@@ -31,10 +31,13 @@ __global__ void reduce_sum_1(const T* src, T* dst, int N) {
 template <typename T>
 __global__ void reduce_sum_2(const T* src, T* dst, int N) {
     extern __shared__ T buffer[];
-    buffer[threadIdx.x] = src[blockIdx.x * blockDim.x + threadIdx.x];
+    int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if(index < N) {
+        buffer[threadIdx.x] = src[index];
+    }
     __syncthreads();
     for (int i = blockDim.x / 2; i > 0; i >>= 1) {
-        if (threadIdx.x < i) {
+        if (threadIdx.x < i && index + i < N) {
             buffer[threadIdx.x] += buffer[threadIdx.x + i];
         }
         __syncthreads();
