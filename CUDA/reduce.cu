@@ -32,7 +32,7 @@ template <typename T>
 __global__ void reduce_sum_2(const T* src, T* dst, int N) {
     extern __shared__ T buffer[];
     int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if(index < N) {
+    if (index < N) {
         buffer[threadIdx.x] = src[index];
     }
     __syncthreads();
@@ -60,6 +60,30 @@ __global__ void reduce_sum_3(const T* src, T* dst, int N) {
         if (threadIdx.x % 32 == 0) {
             atomicAdd(dst, val);
         }
+    }
+}
+
+// ./reduce 10000000 4: 0.06ms
+template <typename T>
+__global__ void reduce_sum_4(const T* src, T* dst, int N) {
+    extern __shared__ T buffer[];
+    int index = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+    if (index < N) {
+        buffer[threadIdx.x] = src[index];
+        if (index + blockDim.x < N) {
+            buffer[threadIdx.x] += src[index + blockDim.x];
+        }
+    }
+    __syncthreads();
+
+    for (int i = blockDim.x / 2; i > 0; i >>= 1) {
+        if (threadIdx.x < i && index + i < N) {
+            buffer[threadIdx.x] += buffer[threadIdx.x + i];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        atomicAdd(dst, buffer[0]);
     }
 }
 
@@ -113,7 +137,7 @@ int main(int argc, char* argv[]) {
                 break;
             }
             case 2: {
-                int threads_per_block = 128;
+                int threads_per_block = 256;  // same with 128
                 int block = (N + threads_per_block - 1) / threads_per_block;
                 reduce_sum_2<int><<<block, threads_per_block,
                                     sizeof(int) * threads_per_block, stream>>>(
@@ -125,6 +149,16 @@ int main(int argc, char* argv[]) {
                 int threads_per_block = 128;
                 int block = (N + threads_per_block - 1) / threads_per_block;
                 reduce_sum_3<int><<<block, threads_per_block, 0, stream>>>(
+                        device_input, device_output, N);
+                after_kernel_launch();
+                break;
+            }
+            case 4: {
+                int threads_per_block = 256;
+                int block =
+                        (N + threads_per_block * 2 - 1) / (threads_per_block * 2);
+                reduce_sum_4<int><<<block, threads_per_block,
+                                    sizeof(int) * threads_per_block, stream>>>(
                         device_input, device_output, N);
                 after_kernel_launch();
                 break;
