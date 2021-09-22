@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 #include "../check.h"
 
+// M=1024, N=1024, K=1024  : 1.010144ms
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -18,6 +19,7 @@ __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
     }
 }
 
+// M=1024, N=1024, K=1024  : 1.907552ms
 #define TILE_WIDTH 16
 __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
                              int K) {
@@ -58,18 +60,20 @@ void init_host_matrix(float* a, float* b, int M, int N, int K);
 void compute_host_matrix(float* a, float* b, float* c, int M, int N, int K);
 void check_matrix(float* c, float* host_c, int M, int K);
 
-int main() {
-    const int M = 10, N = 1024, K = 1024;
-    int width = 16;
-    float *A, *B, *C;
+// ./test M N K kernel
+int main(int argc, char** argv) {
+    const int M = atoi(argv[1]);
+    const int N = atoi(argv[2]);
+    const int K = atoi(argv[3]);
+    int kernel = atoi(argv[4]);
+    printf("M: %d, N: %d, K: %d, kernel: %d\n", M, N, K, kernel);
+    assert(argc == 5);
 
+    float *A, *B, *C;
     float* a = (float*)malloc(M * N * sizeof(float));
     float* b = (float*)malloc(N * K * sizeof(float));
     float* c = (float*)malloc(M * K * sizeof(float));
     float* host_c = (float*)malloc(M * K * sizeof(float));
-
-    dim3 gridSize((M + width - 1) / width, (K + width - 1) / width);
-    dim3 blockSize(width, width);
 
     cudaEvent_t start, stop;
     float elapsedTime;
@@ -86,8 +90,26 @@ int main() {
     CUDACHECK(cudaMemcpy(B, b, N * K * sizeof(float), cudaMemcpyHostToDevice));
 
     CUDACHECK(cudaEventRecord(start, 0));
-    matmul<<<gridSize, blockSize>>>(A, B, C, M, N, K);
-    after_kernel_launch();
+    switch (kernel) {
+        case 0: {
+            int width = 16;
+            dim3 gridSize((M + width - 1) / width, (K + width - 1) / width);
+            dim3 blockSize(width, width);
+            matmul<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            after_kernel_launch();
+            break;
+        }
+        case 1: {
+            dim3 gridSize((M + TILE_WIDTH - 1) / TILE_WIDTH,
+                          (K + TILE_WIDTH - 1) / TILE_WIDTH);
+            dim3 blockSize(TILE_WIDTH, TILE_WIDTH);
+            matmul_share<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            after_kernel_launch();
+            break;
+        }
+        default:
+            printf("no such kernel.\n");
+    }
     CUDACHECK(cudaEventRecord(stop, 0));
     CUDACHECK(cudaEventSynchronize(stop));
     // CUDACHECK(cudaDeviceSynchronize());
@@ -141,8 +163,9 @@ void check_matrix(float* c, float* host_c, int M, int K) {
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < K; j++) {
             if (c[i * K + j] != host_c[i * K + j]) {
-                fprintf(stderr, "check failed: c[%d][%d], host: %f, device: %f\n", i,
-                        j, host_c[i * K + j], c[i * K + j]);
+                fprintf(stderr,
+                        "check failed: c[%d][%d], host: %f, device: %f\n", i, j,
+                        host_c[i * K + j], c[i * K + j]);
                 return;
             }
         }
