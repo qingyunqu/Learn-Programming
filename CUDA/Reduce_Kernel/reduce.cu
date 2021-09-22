@@ -4,7 +4,7 @@
 
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
-#include "check.h"
+#include "../check.h"
 
 // ./reduce 10000000 0: 6.23ms
 template <typename T>

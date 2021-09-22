@@ -3,7 +3,7 @@
 #include <cstdlib>
 
 #include <cuda_runtime.h>
-#include "check.h"
+#include "../check.h"
 
 #define TILE_WIDTH 10
 

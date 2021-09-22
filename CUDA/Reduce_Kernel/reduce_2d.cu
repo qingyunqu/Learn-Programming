@@ -4,7 +4,7 @@
 
 #include <cuda_runtime.h>
 #include <cuda_runtime_api.h>
-#include "check.h"
+#include "../check.h"
 
 template <typename T>
 __global__ void reduce_sum_naive(const T* src, T* dst, int M, int N) {
