@@ -9,12 +9,12 @@
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row < M && col < K) {
+    if (row < M && col < N) {
         float value = 0.f;
-        for (int i = 0; i < N; i++) {
-            value += A[row * N + i] * B[col + i * K];
+        for (int i = 0; i < K; i++) {
+            value += A[row * K + i] * B[i * N + col];
         }
-        C[row * K + col] = value;
+        C[row * N + col] = value;
         // printf("row: %d, col: %d, value: %f\n", row, col, value);
     }
 }
@@ -34,13 +34,13 @@ __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
 
     float value = 0.f;
     for (int t = 0; t < (N + TILE_WIDTH - 1) / TILE_WIDTH; t++) {
-        if (row < M && t * TILE_WIDTH + tx < N) {
-            ds_A[tx][ty] = A[row * N + t * TILE_WIDTH + tx];
+        if (row < M && t * TILE_WIDTH + tx < K) {
+            ds_A[tx][ty] = A[row * K + t * TILE_WIDTH + tx];
         } else {
             ds_A[tx][ty] = 0.f;
         }
-        if (col < K && t * TILE_WIDTH + ty < N) {
-            ds_B[tx][ty] = B[(t * TILE_WIDTH + ty) * K + col];
+        if (col < N && t * TILE_WIDTH + ty < K) {
+            ds_B[tx][ty] = B[(t * TILE_WIDTH + ty) * N + col];
         } else {
             ds_B[tx][ty] = 0.f;
         }
@@ -51,14 +51,14 @@ __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
         __syncthreads();
     }
 
-    if (row < M && col < K) {
-        C[row * K + col] = value;
+    if (row < M && col < N) {
+        C[row * N + col] = value;
     }
 }
 
 void init_host_matrix(float* a, float* b, int M, int N, int K);
 void compute_host_matrix(float* a, float* b, float* c, int M, int N, int K);
-void check_matrix(float* c, float* host_c, int M, int K);
+void check_matrix(float* c, float* host_c, int M, int N);
 
 // ./test M N K kernel
 int main(int argc, char** argv) {
@@ -70,30 +70,30 @@ int main(int argc, char** argv) {
     assert(argc == 5);
 
     float *A, *B, *C;
-    float* a = (float*)malloc(M * N * sizeof(float));
-    float* b = (float*)malloc(N * K * sizeof(float));
-    float* c = (float*)malloc(M * K * sizeof(float));
-    float* host_c = (float*)malloc(M * K * sizeof(float));
+    float* a = (float*)malloc(M * K * sizeof(float));
+    float* b = (float*)malloc(K * N * sizeof(float));
+    float* c = (float*)malloc(M * N * sizeof(float));
+    float* host_c = (float*)malloc(M * N * sizeof(float));
 
     cudaEvent_t start, stop;
     float elapsedTime;
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&stop));
 
-    CUDACHECK(cudaMalloc((void**)&A, M * N * sizeof(float)));
-    CUDACHECK(cudaMalloc((void**)&B, N * K * sizeof(float)));
-    CUDACHECK(cudaMalloc((void**)&C, M * K * sizeof(float)));
+    CUDACHECK(cudaMalloc((void**)&A, M * K * sizeof(float)));
+    CUDACHECK(cudaMalloc((void**)&B, K * N * sizeof(float)));
+    CUDACHECK(cudaMalloc((void**)&C, M * N * sizeof(float)));
 
     init_host_matrix(a, b, M, N, K);
 
-    CUDACHECK(cudaMemcpy(A, a, M * N * sizeof(float), cudaMemcpyHostToDevice));
-    CUDACHECK(cudaMemcpy(B, b, N * K * sizeof(float), cudaMemcpyHostToDevice));
+    CUDACHECK(cudaMemcpy(A, a, M * K * sizeof(float), cudaMemcpyHostToDevice));
+    CUDACHECK(cudaMemcpy(B, b, K * N * sizeof(float), cudaMemcpyHostToDevice));
 
     CUDACHECK(cudaEventRecord(start, 0));
     switch (kernel) {
         case 0: {
             int width = 16;
-            dim3 gridSize((M + width - 1) / width, (K + width - 1) / width);
+            dim3 gridSize((M + width - 1) / width, (N + width - 1) / width);
             dim3 blockSize(width, width);
             matmul<<<gridSize, blockSize>>>(A, B, C, M, N, K);
             after_kernel_launch();
@@ -101,7 +101,7 @@ int main(int argc, char** argv) {
         }
         case 1: {
             dim3 gridSize((M + TILE_WIDTH - 1) / TILE_WIDTH,
-                          (K + TILE_WIDTH - 1) / TILE_WIDTH);
+                          (N + TILE_WIDTH - 1) / TILE_WIDTH);
             dim3 blockSize(TILE_WIDTH, TILE_WIDTH);
             matmul_share<<<gridSize, blockSize>>>(A, B, C, M, N, K);
             after_kernel_launch();
@@ -115,11 +115,11 @@ int main(int argc, char** argv) {
     // CUDACHECK(cudaDeviceSynchronize());
     CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
 
-    CUDACHECK(cudaMemcpy(c, C, M * K * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDACHECK(cudaMemcpy(c, C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
     printf("time: %fms\n", elapsedTime);
 
     compute_host_matrix(a, b, host_c, M, N, K);
-    check_matrix(c, host_c, M, K);
+    check_matrix(c, host_c, M, N);
 
     free(a);
     free(b);
@@ -136,36 +136,36 @@ int main(int argc, char** argv) {
 
 void init_host_matrix(float* a, float* b, int M, int N, int K) {
     for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            a[i * N + j] = 1.f;
+        for (int j = 0; j < K; j++) {
+            a[i * K + j] = 1.f;
         }
     }
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < K; j++) {
-            b[i * K + j] = 1.f;
+    for (int i = 0; i < K; i++) {
+        for (int j = 0; j < N; j++) {
+            b[i * N + j] = 1.f;
         }
     }
 }
 
 void compute_host_matrix(float* a, float* b, float* c, int M, int N, int K) {
     for (int i = 0; i < M; i++) {
-        for (int j = 0; j < K; j++) {
+        for (int j = 0; j < N; j++) {
             float value = 0;
-            for (int t = 0; t < N; t++) {
-                value += a[i * N + t] * b[t * K + j];
+            for (int t = 0; t < K; t++) {
+                value += a[i * K + t] * b[t * N + j];
             }
-            c[i * K + j] = value;
+            c[i * N + j] = value;
         }
     }
 }
 
-void check_matrix(float* c, float* host_c, int M, int K) {
+void check_matrix(float* c, float* host_c, int M, int N) {
     for (int i = 0; i < M; i++) {
-        for (int j = 0; j < K; j++) {
-            if (c[i * K + j] != host_c[i * K + j]) {
+        for (int j = 0; j < N; j++) {
+            if (c[i * N + j] != host_c[i * N + j]) {
                 fprintf(stderr,
                         "check failed: c[%d][%d], host: %f, device: %f\n", i, j,
-                        host_c[i * K + j], c[i * K + j]);
+                        host_c[i * N + j], c[i * N + j]);
                 return;
             }
         }
