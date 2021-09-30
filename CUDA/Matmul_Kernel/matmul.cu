@@ -28,24 +28,24 @@ __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
     int by = blockIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
-    int row = by * TILE_WIDTH + ty;
-    int col = bx * TILE_WIDTH + tx;
+    int col = by * TILE_WIDTH + ty;
+    int row = bx * TILE_WIDTH + tx;
 
     float value = 0.f;
     for (int t = 0; t < (K + TILE_WIDTH - 1) / TILE_WIDTH; t++) {
-        if (row < M && t * TILE_WIDTH + tx < K) {
-            ds_A[tx][ty] = A[row * K + t * TILE_WIDTH + tx];
+        if (row < M && t * TILE_WIDTH + ty < K) {
+            ds_A[tx][ty] = A[row * K + t * TILE_WIDTH + ty];
         } else {
             ds_A[tx][ty] = 0.f;
         }
-        if (col < N && t * TILE_WIDTH + ty < K) {
-            ds_B[tx][ty] = B[(t * TILE_WIDTH + ty) * N + col];
+        if (col < N && t * TILE_WIDTH + tx < K) {
+            ds_B[tx][ty] = B[(t * TILE_WIDTH + tx) * N + col];
         } else {
             ds_B[tx][ty] = 0.f;
         }
         __syncthreads();
-        for (int i = 0; i < TILE_WIDTH; i++) {
-            value += ds_A[tx][i] * ds_B[i][ty];
+        for (int k = 0; k < TILE_WIDTH; k++) {
+            value += ds_A[tx][k] * ds_B[k][ty];
         }
         __syncthreads();
     }
@@ -141,7 +141,7 @@ void init_host_matrix(float* a, float* b, int M, int N, int K) {
     }
     for (int i = 0; i < K; i++) {
         for (int j = 0; j < N; j++) {
-            b[i * N + j] = 1.f;
+            b[i * N + j] = 2.f;
         }
     }
 }
