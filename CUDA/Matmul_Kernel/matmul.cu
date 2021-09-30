@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 #include "../check.h"
 
-// M=1024, N=1024, K=1024  : 1.010144ms
+// M=1024, N=1024, K=1024  : 4.938048ms
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
     int col = blockIdx.y * blockDim.y + threadIdx.y;
     int row = blockIdx.x * blockDim.x + threadIdx.x;
@@ -18,7 +18,20 @@ __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
     }
 }
 
-// M=1024, N=1024, K=1024  : 1.907552ms
+// M=1024, N=1024, K=1024  : 1.000160ms
+__global__ void matmul1(float* A, float* B, float* C, int M, int N, int K) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < M && col < N) {
+        float value = 0.f;
+        for (int k = 0; k < K; k++) {
+            value += A[row * K + k] * B[k * N + col];
+        }
+        C[row * N + col] = value;
+    }
+}
+
+// M=1024, N=1024, K=1024  : 2.476992ms
 #define TILE_WIDTH 16
 __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
                              int K) {
@@ -61,12 +74,11 @@ void check_matrix(float* c, float* host_c, int M, int N);
 
 // ./test M N K kernel
 int main(int argc, char** argv) {
+    assert(argc == 5 && "./test M N K kernel");
     const int M = atoi(argv[1]);
     const int N = atoi(argv[2]);
     const int K = atoi(argv[3]);
     int kernel = atoi(argv[4]);
-    printf("M: %d, N: %d, K: %d, kernel: %d\n", M, N, K, kernel);
-    assert(argc == 5);
 
     float *A, *B, *C;
     float* a = (float*)malloc(M * K * sizeof(float));
@@ -91,6 +103,7 @@ int main(int argc, char** argv) {
     CUDACHECK(cudaEventRecord(start, 0));
     switch (kernel) {
         case 0: {
+            printf("M: %d, N: %d, K: %d, kernel: matmul\n", M, N, K);
             int width = 16;
             dim3 gridSize((M + width - 1) / width, (N + width - 1) / width);
             dim3 blockSize(width, width);
@@ -99,6 +112,16 @@ int main(int argc, char** argv) {
             break;
         }
         case 1: {
+            printf("M: %d, N: %d, K: %d, kernel: matmul1\n", M, N, K);
+            int width = 16;
+            dim3 gridSize((M + width - 1) / width, (N + width - 1) / width);
+            dim3 blockSize(width, width);
+            matmul1<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            after_kernel_launch();
+            break;
+        }
+        case 2: {
+            printf("M: %d, N: %d, K: %d, kernel: matmul_share\n", M, N, K);
             dim3 gridSize((M + TILE_WIDTH - 1) / TILE_WIDTH,
                           (N + TILE_WIDTH - 1) / TILE_WIDTH);
             dim3 blockSize(TILE_WIDTH, TILE_WIDTH);
