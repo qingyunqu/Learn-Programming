@@ -7,15 +7,14 @@
 
 // M=1024, N=1024, K=1024  : 1.010144ms
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int col = blockIdx.y * blockDim.y + threadIdx.y;
+    int row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < M && col < N) {
         float value = 0.f;
-        for (int i = 0; i < K; i++) {
-            value += A[row * K + i] * B[i * N + col];
+        for (int k = 0; k < K; k++) {
+            value += A[row * K + k] * B[k * N + col];
         }
         C[row * N + col] = value;
-        // printf("row: %d, col: %d, value: %f\n", row, col, value);
     }
 }
 
@@ -33,7 +32,7 @@ __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
     int col = bx * TILE_WIDTH + tx;
 
     float value = 0.f;
-    for (int t = 0; t < (N + TILE_WIDTH - 1) / TILE_WIDTH; t++) {
+    for (int t = 0; t < (K + TILE_WIDTH - 1) / TILE_WIDTH; t++) {
         if (row < M && t * TILE_WIDTH + tx < K) {
             ds_A[tx][ty] = A[row * K + t * TILE_WIDTH + tx];
         } else {
@@ -46,7 +45,7 @@ __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
         }
         __syncthreads();
         for (int i = 0; i < TILE_WIDTH; i++) {
-            value += ds_A[i][ty] * ds_B[tx][i];
+            value += ds_A[tx][i] * ds_B[i][ty];
         }
         __syncthreads();
     }
