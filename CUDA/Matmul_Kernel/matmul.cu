@@ -1,9 +1,12 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
 
 #include <cuda_runtime.h>
 #include "../check.h"
+
+#include "cutlass/gemm/device/gemm.h"
 
 // M=1024, N=1024, K=1024  : 4.938048ms
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
@@ -68,6 +71,41 @@ __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
     }
 }
 
+// M=1024, N=1024, K=1024  : 1.926304ms
+__global__ void matmul_share1(float* A, float* B, float* C, int M, int N, int K) {
+    __shared__ float ds_A[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float ds_B[TILE_WIDTH][TILE_WIDTH];
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+    int row = by * TILE_WIDTH + ty;
+    int col = bx * TILE_WIDTH + tx;
+
+    float value = 0.f;
+    for (int t = 0; t < (K + TILE_WIDTH - 1) / TILE_WIDTH; t++) {
+        if (row < M && t * TILE_WIDTH + tx < K) {
+            ds_A[ty][tx] = A[row * K + t * TILE_WIDTH + tx];
+        } else {
+            ds_A[ty][tx] = 0.f;
+        }
+        if (col < N && t * TILE_WIDTH + ty < K) {
+            ds_B[ty][tx] = B[(t * TILE_WIDTH + ty) * N + col];
+        } else {
+            ds_B[ty][tx] = 0.f;
+        }
+        __syncthreads();
+        for (int k = 0; k < TILE_WIDTH; k++) {
+            value += ds_A[ty][k] * ds_B[k][tx];
+        }
+        __syncthreads();
+    }
+
+    if (row < M && col < N) {
+        C[row * N + col] = value;
+    }
+}
+
 void init_host_matrix(float* a, float* b, int M, int N, int K);
 void compute_host_matrix(float* a, float* b, float* c, int M, int N, int K);
 void check_matrix(float* c, float* host_c, int M, int N);
@@ -114,7 +152,7 @@ int main(int argc, char** argv) {
         case 1: {
             printf("M: %d, N: %d, K: %d, kernel: matmul1\n", M, N, K);
             int width = 16;
-            dim3 gridSize((M + width - 1) / width, (N + width - 1) / width);
+            dim3 gridSize((N + width - 1) / width, (M + width - 1) / width);
             dim3 blockSize(width, width);
             matmul1<<<gridSize, blockSize>>>(A, B, C, M, N, K);
             after_kernel_launch();
@@ -126,6 +164,25 @@ int main(int argc, char** argv) {
                           (N + TILE_WIDTH - 1) / TILE_WIDTH);
             dim3 blockSize(TILE_WIDTH, TILE_WIDTH);
             matmul_share<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            after_kernel_launch();
+            break;
+        }
+        case 3: {
+            printf("M: %d, N: %d, K: %d, kernel: matmul_share1\n", M, N, K);
+            dim3 gridSize((N + TILE_WIDTH - 1) / TILE_WIDTH,
+                          (M + TILE_WIDTH - 1) / TILE_WIDTH);
+            dim3 blockSize(TILE_WIDTH, TILE_WIDTH);
+            matmul_share1<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            after_kernel_launch();
+            break;
+        }
+        case 4: {
+            printf("M: %d, N: %d, K: %d, kernel: cutlass_default\n", M, N, K);
+            using RowMajor = cutlass::layout::RowMajor;
+            using Gemm = cutlass::gemm::device::Gemm<float, RowMajor, float, RowMajor, float, RowMajor>;
+            Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {C, N}, {C, N}, {1.f, 0.f});
+            Gemm gemm;
+            CUTLASS_CHECK(gemm(args));
             after_kernel_launch();
             break;
         }
