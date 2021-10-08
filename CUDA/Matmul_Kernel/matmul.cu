@@ -8,6 +8,8 @@
 
 #include "cutlass/gemm/device/gemm.h"
 
+#define CEIL_DIV(a, b) (((a) + (b)-1) / (b))
+
 // M=1024, N=1024, K=1024  : 4.938048ms
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
     int col = blockIdx.y * blockDim.y + threadIdx.y;
@@ -72,7 +74,8 @@ __global__ void matmul_share(float* A, float* B, float* C, int M, int N,
 }
 
 // M=1024, N=1024, K=1024  : 1.926304ms
-__global__ void matmul_share1(float* A, float* B, float* C, int M, int N, int K) {
+__global__ void matmul_share1(float* A, float* B, float* C, int M, int N,
+                              int K) {
     __shared__ float ds_A[TILE_WIDTH][TILE_WIDTH];
     __shared__ float ds_B[TILE_WIDTH][TILE_WIDTH];
     int bx = blockIdx.x;
@@ -106,9 +109,16 @@ __global__ void matmul_share1(float* A, float* B, float* C, int M, int N, int K)
     }
 }
 
-void init_host_matrix(float* a, float* b, int M, int N, int K);
-void compute_host_matrix(float* a, float* b, float* c, int M, int N, int K);
-void check_matrix(float* c, float* host_c, int M, int N);
+template <typename T>
+__global__ void init_matrix(T* a, int row, int column, T value) {
+    int r = blockDim.y * blockIdx.y + threadIdx.y;
+    int c = blockDim.x * blockIdx.x + threadIdx.x;
+    if (r < row && c < column) {
+        a[r * column + c] = value;
+    }
+}
+
+void check_matrix(float* c, float* ref_c, int M, int N);
 
 // ./test M N K kernel
 int main(int argc, char** argv) {
@@ -118,69 +128,79 @@ int main(int argc, char** argv) {
     const int K = atoi(argv[3]);
     int kernel = atoi(argv[4]);
 
-    float *A, *B, *C;
-    float* a = (float*)malloc(M * K * sizeof(float));
-    float* b = (float*)malloc(K * N * sizeof(float));
-    float* c = (float*)malloc(M * N * sizeof(float));
-    float* host_c = (float*)malloc(M * N * sizeof(float));
-
     cudaEvent_t start, stop;
     float elapsedTime;
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&stop));
 
+    float *A, *B, *C, *ref_C;
     CUDACHECK(cudaMalloc((void**)&A, M * K * sizeof(float)));
     CUDACHECK(cudaMalloc((void**)&B, K * N * sizeof(float)));
     CUDACHECK(cudaMalloc((void**)&C, M * N * sizeof(float)));
+    CUDACHECK(cudaMalloc((void**)&ref_C, M * N * sizeof(float)));
 
-    init_host_matrix(a, b, M, N, K);
-
-    CUDACHECK(cudaMemcpy(A, a, M * K * sizeof(float), cudaMemcpyHostToDevice));
-    CUDACHECK(cudaMemcpy(B, b, K * N * sizeof(float), cudaMemcpyHostToDevice));
+    {
+        dim3 block(16, 16);
+        dim3 grid(CEIL_DIV(K, block.x), CEIL_DIV(M, block.y));
+        init_matrix<float><<<grid, block>>>(A, M, K, 1.f);
+    }
+    {
+        dim3 block(16, 16);
+        dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(K, block.y));
+        init_matrix<float><<<grid, block>>>(B, K, N, 2.f);
+    }
+    {
+        using RowMajor = cutlass::layout::RowMajor;
+        using Gemm = cutlass::gemm::device::Gemm<float, RowMajor, float,
+                                                 RowMajor, float, RowMajor>;
+        Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {ref_C, N}, {ref_C, N},
+                             {1.f, 0.f});
+        Gemm gemm;
+        CUTLASS_CHECK(gemm(args));
+        after_kernel_launch();
+    }
 
     CUDACHECK(cudaEventRecord(start, 0));
     switch (kernel) {
         case 0: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul\n", M, N, K);
-            int width = 16;
-            dim3 gridSize((M + width - 1) / width, (N + width - 1) / width);
-            dim3 blockSize(width, width);
-            matmul<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul          ", M, N, K);
+            dim3 block(16, 16);
+            dim3 grid(CEIL_DIV(M, block.x), CEIL_DIV(N, block.y));
+            matmul<<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
         case 1: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul1\n", M, N, K);
-            int width = 16;
-            dim3 gridSize((N + width - 1) / width, (M + width - 1) / width);
-            dim3 blockSize(width, width);
-            matmul1<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul1         ", M, N, K);
+            dim3 block(16, 16);
+            dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
+            matmul1<<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
         case 2: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul_share\n", M, N, K);
-            dim3 gridSize((M + TILE_WIDTH - 1) / TILE_WIDTH,
-                          (N + TILE_WIDTH - 1) / TILE_WIDTH);
-            dim3 blockSize(TILE_WIDTH, TILE_WIDTH);
-            matmul_share<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul_share    ", M, N, K);
+            dim3 block(TILE_WIDTH, TILE_WIDTH);
+            dim3 grid(CEIL_DIV(M, block.x), CEIL_DIV(N, block.y));
+            matmul_share<<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
         case 3: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul_share1\n", M, N, K);
-            dim3 gridSize((N + TILE_WIDTH - 1) / TILE_WIDTH,
-                          (M + TILE_WIDTH - 1) / TILE_WIDTH);
-            dim3 blockSize(TILE_WIDTH, TILE_WIDTH);
-            matmul_share1<<<gridSize, blockSize>>>(A, B, C, M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul_share1   ", M, N, K);
+            dim3 block(TILE_WIDTH, TILE_WIDTH);
+            dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
+            matmul_share1<<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
         case 4: {
-            printf("M: %d, N: %d, K: %d, kernel: cutlass_default\n", M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: cutlass_default ", M, N, K);
             using RowMajor = cutlass::layout::RowMajor;
-            using Gemm = cutlass::gemm::device::Gemm<float, RowMajor, float, RowMajor, float, RowMajor>;
-            Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {C, N}, {C, N}, {1.f, 0.f});
+            using Gemm = cutlass::gemm::device::Gemm<float, RowMajor, float,
+                                                     RowMajor, float, RowMajor>;
+            Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {C, N}, {C, N},
+                                 {1.f, 0.f});
             Gemm gemm;
             CUTLASS_CHECK(gemm(args));
             after_kernel_launch();
@@ -193,58 +213,34 @@ int main(int argc, char** argv) {
     CUDACHECK(cudaEventSynchronize(stop));
     // CUDACHECK(cudaDeviceSynchronize());
     CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
-
-    CUDACHECK(cudaMemcpy(c, C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
     printf("time: %fms\n", elapsedTime);
 
-    compute_host_matrix(a, b, host_c, M, N, K);
-    check_matrix(c, host_c, M, N);
+    float* c = (float*)malloc(M * N * sizeof(float));
+    float* ref_c = (float*)malloc(M * N * sizeof(float));
+    CUDACHECK(cudaMemcpy(c, C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDACHECK(cudaMemcpy(ref_c, ref_C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
 
-    free(a);
-    free(b);
+    check_matrix(c, ref_c, M, N);
+
     free(c);
-    free(host_c);
+    free(ref_c);
     CUDACHECK(cudaFree(A));
     CUDACHECK(cudaFree(B));
     CUDACHECK(cudaFree(C));
+    CUDACHECK(cudaFree(ref_C));
     CUDACHECK(cudaEventDestroy(start));
     CUDACHECK(cudaEventDestroy(stop));
 
     return 0;
 }
 
-void init_host_matrix(float* a, float* b, int M, int N, int K) {
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < K; j++) {
-            a[i * K + j] = 1.f;
-        }
-    }
-    for (int i = 0; i < K; i++) {
-        for (int j = 0; j < N; j++) {
-            b[i * N + j] = 2.f;
-        }
-    }
-}
-
-void compute_host_matrix(float* a, float* b, float* c, int M, int N, int K) {
+void check_matrix(float* c, float* ref_c, int M, int N) {
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            float value = 0;
-            for (int t = 0; t < K; t++) {
-                value += a[i * K + t] * b[t * N + j];
-            }
-            c[i * N + j] = value;
-        }
-    }
-}
-
-void check_matrix(float* c, float* host_c, int M, int N) {
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            if (c[i * N + j] != host_c[i * N + j]) {
+            if (c[i * N + j] != ref_c[i * N + j]) {
                 fprintf(stderr,
-                        "check failed: c[%d][%d], host: %f, device: %f\n", i, j,
-                        host_c[i * N + j], c[i * N + j]);
+                        "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
+                        ref_c[i * N + j], c[i * N + j]);
                 return;
             }
         }
