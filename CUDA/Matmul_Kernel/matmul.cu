@@ -144,6 +144,7 @@ __global__ void init_matrix(T* a, int row, int column, T value) {
 
 void check_matrix(float* c, float* ref_c, int M, int N);
 void check_matrix_col_row(float* c, float* ref_c, int M, int N);
+void check_matrix_col_col(float* c, float* ref_c, int M, int N);
 
 // ./test M N K kernel
 int main(int argc, char** argv) {
@@ -178,6 +179,7 @@ int main(int argc, char** argv) {
     }
     {
         using RowMajor = cutlass::layout::RowMajor;
+        using ColMajor = cutlass::layout::ColumnMajor;
         using Gemm = cutlass::gemm::device::Gemm<float, RowMajor, float,
                                                  RowMajor, float, RowMajor>;
         Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {ref_C, N}, {ref_C, N},
@@ -224,13 +226,13 @@ int main(int argc, char** argv) {
         case 4: {
             printf("M: %d, N: %d, K: %d, kernel: cutlass_default ", M, N, K);
             using RowMajor = cutlass::layout::RowMajor;
+            using ColMajor = cutlass::layout::ColumnMajor;
             using Gemm = cutlass::gemm::device::Gemm<float, RowMajor, float,
                                                      RowMajor, float, RowMajor>;
             Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {C, N}, {C, N},
                                  {1.f, 0.f});
             Gemm gemm;
             CUTLASS_CHECK(gemm(args));
-            after_kernel_launch();
             break;
         }
         case 5: {
@@ -259,6 +261,7 @@ int main(int argc, char** argv) {
         check_matrix(c, ref_c, M, N);
     else
         check_matrix_col_row(c, ref_c, M, N);
+    // check_matrix_col_col(c, ref_c, M, N);
 
     free(c);
     free(ref_c);
@@ -292,6 +295,19 @@ void check_matrix_col_row(float* c, float* ref_c, int M, int N) {
                 fprintf(stderr,
                         "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
                         ref_c[i * N + j], c[i + j * M]);
+                return;
+            }
+        }
+    }
+}
+
+void check_matrix_col_col(float* c, float* ref_c, int M, int N) {
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            if (ref_c[i + j * M] != c[i + j * M]) {
+                fprintf(stderr,
+                        "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
+                        ref_c[i + j * M], c[i + j * M]);
                 return;
             }
         }
