@@ -12,18 +12,24 @@
 
 #define CEIL_DIV(a, b) (((a) + (b)-1) / (b))
 
-const char* cublasGetErrorString(cublasStatus_t status)
-{
-    switch(status)
-    {
-        case CUBLAS_STATUS_SUCCESS: return "CUBLAS_STATUS_SUCCESS";
-        case CUBLAS_STATUS_NOT_INITIALIZED: return "CUBLAS_STATUS_NOT_INITIALIZED";
-        case CUBLAS_STATUS_ALLOC_FAILED: return "CUBLAS_STATUS_ALLOC_FAILED";
-        case CUBLAS_STATUS_INVALID_VALUE: return "CUBLAS_STATUS_INVALID_VALUE"; 
-        case CUBLAS_STATUS_ARCH_MISMATCH: return "CUBLAS_STATUS_ARCH_MISMATCH"; 
-        case CUBLAS_STATUS_MAPPING_ERROR: return "CUBLAS_STATUS_MAPPING_ERROR";
-        case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED"; 
-        case CUBLAS_STATUS_INTERNAL_ERROR: return "CUBLAS_STATUS_INTERNAL_ERROR"; 
+const char* cublasGetErrorString(cublasStatus_t status) {
+    switch (status) {
+        case CUBLAS_STATUS_SUCCESS:
+            return "CUBLAS_STATUS_SUCCESS";
+        case CUBLAS_STATUS_NOT_INITIALIZED:
+            return "CUBLAS_STATUS_NOT_INITIALIZED";
+        case CUBLAS_STATUS_ALLOC_FAILED:
+            return "CUBLAS_STATUS_ALLOC_FAILED";
+        case CUBLAS_STATUS_INVALID_VALUE:
+            return "CUBLAS_STATUS_INVALID_VALUE";
+        case CUBLAS_STATUS_ARCH_MISMATCH:
+            return "CUBLAS_STATUS_ARCH_MISMATCH";
+        case CUBLAS_STATUS_MAPPING_ERROR:
+            return "CUBLAS_STATUS_MAPPING_ERROR";
+        case CUBLAS_STATUS_EXECUTION_FAILED:
+            return "CUBLAS_STATUS_EXECUTION_FAILED";
+        case CUBLAS_STATUS_INTERNAL_ERROR:
+            return "CUBLAS_STATUS_INTERNAL_ERROR";
     }
     return "unknown error";
 }
@@ -132,11 +138,12 @@ __global__ void init_matrix(T* a, int row, int column, T value) {
     int r = blockDim.y * blockIdx.y + threadIdx.y;
     int c = blockDim.x * blockIdx.x + threadIdx.x;
     if (r < row && c < column) {
-        a[r * column + c] = value + r - c;
+        a[r * column + c] = value;
     }
 }
 
 void check_matrix(float* c, float* ref_c, int M, int N);
+void check_matrix_col_row(float* c, float* ref_c, int M, int N);
 
 // ./test M N K kernel
 int main(int argc, char** argv) {
@@ -229,7 +236,8 @@ int main(int argc, char** argv) {
         case 5: {
             printf("M: %d, N: %d, K: %d, kernel: cublas ", M, N, K);
             float alpha = 1.f, beta = 0.f;
-            cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_T, M, N, K, &alpha, A, K, B, N, &beta, C, N);
+            cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_T, M, N, K, &alpha, A, K,
+                        B, N, &beta, C, M);
             break;
         }
         default:
@@ -244,9 +252,13 @@ int main(int argc, char** argv) {
     float* c = (float*)malloc(M * N * sizeof(float));
     float* ref_c = (float*)malloc(M * N * sizeof(float));
     CUDACHECK(cudaMemcpy(c, C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
-    CUDACHECK(cudaMemcpy(ref_c, ref_C, M * N * sizeof(float), cudaMemcpyDeviceToHost));
+    CUDACHECK(cudaMemcpy(ref_c, ref_C, M * N * sizeof(float),
+                         cudaMemcpyDeviceToHost));
 
-    check_matrix(c, ref_c, M, N);
+    if (kernel != 5)
+        check_matrix(c, ref_c, M, N);
+    else
+        check_matrix_col_row(c, ref_c, M, N);
 
     free(c);
     free(ref_c);
@@ -267,6 +279,19 @@ void check_matrix(float* c, float* ref_c, int M, int N) {
                 fprintf(stderr,
                         "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
                         ref_c[i * N + j], c[i * N + j]);
+                return;
+            }
+        }
+    }
+}
+
+void check_matrix_col_row(float* c, float* ref_c, int M, int N) {
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            if (ref_c[i * N + j] != c[i + j * M]) {
+                fprintf(stderr,
+                        "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
+                        ref_c[i * N + j], c[i + j * M]);
                 return;
             }
         }
