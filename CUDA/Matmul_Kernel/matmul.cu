@@ -8,7 +8,25 @@
 
 #include "cutlass/gemm/device/gemm.h"
 
+#include "cublas_v2.h"
+
 #define CEIL_DIV(a, b) (((a) + (b)-1) / (b))
+
+const char* cublasGetErrorString(cublasStatus_t status)
+{
+    switch(status)
+    {
+        case CUBLAS_STATUS_SUCCESS: return "CUBLAS_STATUS_SUCCESS";
+        case CUBLAS_STATUS_NOT_INITIALIZED: return "CUBLAS_STATUS_NOT_INITIALIZED";
+        case CUBLAS_STATUS_ALLOC_FAILED: return "CUBLAS_STATUS_ALLOC_FAILED";
+        case CUBLAS_STATUS_INVALID_VALUE: return "CUBLAS_STATUS_INVALID_VALUE"; 
+        case CUBLAS_STATUS_ARCH_MISMATCH: return "CUBLAS_STATUS_ARCH_MISMATCH"; 
+        case CUBLAS_STATUS_MAPPING_ERROR: return "CUBLAS_STATUS_MAPPING_ERROR";
+        case CUBLAS_STATUS_EXECUTION_FAILED: return "CUBLAS_STATUS_EXECUTION_FAILED"; 
+        case CUBLAS_STATUS_INTERNAL_ERROR: return "CUBLAS_STATUS_INTERNAL_ERROR"; 
+    }
+    return "unknown error";
+}
 
 // M=1024, N=1024, K=1024  : 4.938048ms
 __global__ void matmul(float* A, float* B, float* C, int M, int N, int K) {
@@ -114,7 +132,7 @@ __global__ void init_matrix(T* a, int row, int column, T value) {
     int r = blockDim.y * blockIdx.y + threadIdx.y;
     int c = blockDim.x * blockIdx.x + threadIdx.x;
     if (r < row && c < column) {
-        a[r * column + c] = value;
+        a[r * column + c] = value + r - c;
     }
 }
 
@@ -132,6 +150,8 @@ int main(int argc, char** argv) {
     float elapsedTime;
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&stop));
+    cublasHandle_t handle;
+    CUBLASCHECK(cublasCreate(&handle));
 
     float *A, *B, *C, *ref_C;
     CUDACHECK(cudaMalloc((void**)&A, M * K * sizeof(float)));
@@ -204,6 +224,12 @@ int main(int argc, char** argv) {
             Gemm gemm;
             CUTLASS_CHECK(gemm(args));
             after_kernel_launch();
+            break;
+        }
+        case 5: {
+            printf("M: %d, N: %d, K: %d, kernel: cublas ", M, N, K);
+            float alpha = 1.f, beta = 0.f;
+            cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_T, M, N, K, &alpha, A, K, B, N, &beta, C, N);
             break;
         }
         default:

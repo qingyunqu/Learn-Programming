@@ -30,6 +30,16 @@
         }                                                          \
     }
 
+#define CUBLASCHECK(expression)                                     \
+    {                                                              \
+        cublasStatus_t status = (expression);                       \
+        if (status != CUBLAS_STATUS_SUCCESS) {                      \
+            std::cerr << "Error on line " << __LINE__ << ": "      \
+                      << cublasGetErrorString(status) << std::endl; \
+            std::exit(EXIT_FAILURE);                               \
+        }                                                          \
+    }
+
 #define CUTLASS_CHECK(status)                                                                    \
   {                                                                                              \
     cutlass::Status error = status;                                                              \
