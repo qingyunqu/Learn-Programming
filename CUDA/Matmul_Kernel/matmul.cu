@@ -236,10 +236,11 @@ int main(int argc, char** argv) {
             break;
         }
         case 5: {
+            // CT = (AB)T = BT @ AT
             printf("M: %d, N: %d, K: %d, kernel: cublas ", M, N, K);
             float alpha = 1.f, beta = 0.f;
-            cublasSgemm(handle, CUBLAS_OP_T, CUBLAS_OP_T, M, N, K, &alpha, A, K,
-                        B, N, &beta, C, M);
+            cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, B, N,
+                        A, K, &beta, C, N);
             break;
         }
         default:
@@ -257,11 +258,7 @@ int main(int argc, char** argv) {
     CUDACHECK(cudaMemcpy(ref_c, ref_C, M * N * sizeof(float),
                          cudaMemcpyDeviceToHost));
 
-    if (kernel != 5)
-        check_matrix(c, ref_c, M, N);
-    else
-        check_matrix_col_row(c, ref_c, M, N);
-    // check_matrix_col_col(c, ref_c, M, N);
+    check_matrix(c, ref_c, M, N);
 
     free(c);
     free(ref_c);
