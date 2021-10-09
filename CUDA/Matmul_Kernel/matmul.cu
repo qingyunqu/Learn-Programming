@@ -174,9 +174,15 @@ int main(int argc, char** argv) {
     cublasHandle_t handle;
     CUBLASCHECK(cublasCreate(&handle));
 
-#define FP16
+// #define FP162FP16
+//     using Ti = __half;
+//     using To = __half;
+#define FP162FP32
     using Ti = __half;
-    using To = __half;
+    using To = float;
+// #define FP322FP32
+//     using Ti = float;
+//     using To = float;
 
     Ti *A, *B;
     To *C, *ref_C;
@@ -256,12 +262,18 @@ int main(int argc, char** argv) {
         case 5: {
             // CT = (AB)T = BT @ AT
             printf("M: %d, N: %d, K: %d, kernel: cublas ", M, N, K);
-#ifdef FP16
+#ifdef FP162FP16
             //__half alpha = static_cast<__half>(1.f), beta = static_cast<__half>(0.f);
             __half alpha = __float2half(1.f), beta = __float2half(0.f);
             CUBLASCHECK(cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
                                     &alpha, B, N, A, K, &beta, C, N));
-#else
+#endif
+#ifdef FP162FP32
+            float alpha = 1.f, beta = 0.f;
+            CUBLASCHECK(cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
+                &alpha, B, CUDA_R_16F, N, A, CUDA_R_16F, K, &beta, C, CUDA_R_32F, N));
+#endif
+#ifdef FP322FP32
             float alpha = 1.f, beta = 0.f;
             CUBLASCHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
                                     &alpha, B, N, A, K, &beta, C, N));
