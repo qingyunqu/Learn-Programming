@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <iostream>
 
+#include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include "../check.h"
 
@@ -35,28 +36,28 @@ const char* cublasGetErrorString(cublasStatus_t status) {
 }
 
 // M=1024, N=1024, K=1024  : 4.938048ms
-template<typename Ti, typename To>
+template <typename Ti, typename To>
 __global__ void matmul(Ti* A, Ti* B, To* C, int M, int N, int K) {
     int col = blockIdx.y * blockDim.y + threadIdx.y;
     int row = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < M && col < N) {
         To value = static_cast<To>(0);
         for (int k = 0; k < K; k++) {
-            value += A[row * K + k] * B[k * N + col];
+            value += static_cast<To>(A[row * K + k] * B[k * N + col]);
         }
         C[row * N + col] = value;
     }
 }
 
 // M=1024, N=1024, K=1024  : 1.000160ms
-template<typename Ti, typename To>
+template <typename Ti, typename To>
 __global__ void matmul1(Ti* A, Ti* B, To* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < M && col < N) {
         To value = static_cast<To>(0);
         for (int k = 0; k < K; k++) {
-            value += A[row * K + k] * B[k * N + col];
+            value += static_cast<To>(A[row * K + k] * B[k * N + col]);
         }
         C[row * N + col] = value;
     }
@@ -64,9 +65,8 @@ __global__ void matmul1(Ti* A, Ti* B, To* C, int M, int N, int K) {
 
 // M=1024, N=1024, K=1024  : 2.476992ms
 #define TILE_WIDTH 16
-template<typename Ti, typename To>
-__global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N,
-                             int K) {
+template <typename Ti, typename To>
+__global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N, int K) {
     __shared__ Ti ds_A[TILE_WIDTH][TILE_WIDTH];
     __shared__ Ti ds_B[TILE_WIDTH][TILE_WIDTH];
     int bx = blockIdx.x;
@@ -90,7 +90,7 @@ __global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N,
         }
         __syncthreads();
         for (int k = 0; k < TILE_WIDTH; k++) {
-            value += ds_A[tx][k] * ds_B[k][ty];
+            value += static_cast<To>(ds_A[tx][k] * ds_B[k][ty]);
         }
         __syncthreads();
     }
@@ -101,9 +101,8 @@ __global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N,
 }
 
 // M=1024, N=1024, K=1024  : 1.926304ms
-template<typename Ti, typename To>
-__global__ void matmul_share1(Ti* A, Ti* B, To* C, int M, int N,
-                              int K) {
+template <typename Ti, typename To>
+__global__ void matmul_share1(Ti* A, Ti* B, To* C, int M, int N, int K) {
     __shared__ Ti ds_A[TILE_WIDTH][TILE_WIDTH];
     __shared__ Ti ds_B[TILE_WIDTH][TILE_WIDTH];
     int bx = blockIdx.x;
@@ -127,7 +126,7 @@ __global__ void matmul_share1(Ti* A, Ti* B, To* C, int M, int N,
         }
         __syncthreads();
         for (int k = 0; k < TILE_WIDTH; k++) {
-            value += ds_A[ty][k] * ds_B[k][tx];
+            value += static_cast<To>(ds_A[ty][k] * ds_B[k][tx]);
         }
         __syncthreads();
     }
@@ -146,7 +145,7 @@ __global__ void init_matrix(T* a, int row, int column, float value) {
     }
 }
 
-template<typename T>
+template <typename T>
 void check_matrix(T* c, T* ref_c, int M, int N) {
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
@@ -159,8 +158,6 @@ void check_matrix(T* c, T* ref_c, int M, int N) {
         }
     }
 }
-void check_matrix_col_row(float* c, float* ref_c, int M, int N);
-void check_matrix_col_col(float* c, float* ref_c, int M, int N);
 
 // ./test M N K kernel
 int main(int argc, char** argv) {
@@ -177,9 +174,9 @@ int main(int argc, char** argv) {
     cublasHandle_t handle;
     CUBLASCHECK(cublasCreate(&handle));
 
-    using Ti = float;
-    using To = float;
-    //bool fp16 = false;
+#define FP16
+    using Ti = __half;
+    using To = __half;
 
     Ti *A, *B;
     To *C, *ref_C;
@@ -201,8 +198,8 @@ int main(int argc, char** argv) {
     {
         using RowMajor = cutlass::layout::RowMajor;
         using ColMajor = cutlass::layout::ColumnMajor;
-        using Gemm = cutlass::gemm::device::Gemm<Ti, RowMajor, Ti,
-                                                 RowMajor, To, RowMajor>;
+        using Gemm = cutlass::gemm::device::Gemm<Ti, RowMajor, Ti, RowMajor, To,
+                                                 RowMajor>;
         Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {ref_C, N}, {ref_C, N},
                              {1.f, 0.f});
         Gemm gemm;
@@ -248,8 +245,8 @@ int main(int argc, char** argv) {
             printf("M: %d, N: %d, K: %d, kernel: cutlass_default ", M, N, K);
             using RowMajor = cutlass::layout::RowMajor;
             using ColMajor = cutlass::layout::ColumnMajor;
-            using Gemm = cutlass::gemm::device::Gemm<Ti, RowMajor, Ti,
-                                                     RowMajor, To, RowMajor>;
+            using Gemm = cutlass::gemm::device::Gemm<Ti, RowMajor, Ti, RowMajor,
+                                                     To, RowMajor>;
             Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {C, N}, {C, N},
                                  {1.f, 0.f});
             Gemm gemm;
@@ -259,9 +256,16 @@ int main(int argc, char** argv) {
         case 5: {
             // CT = (AB)T = BT @ AT
             printf("M: %d, N: %d, K: %d, kernel: cublas ", M, N, K);
+#ifdef FP16
+            //__half alpha = static_cast<__half>(1.f), beta = static_cast<__half>(0.f);
+            __half alpha = __float2half(1.f), beta = __float2half(0.f);
+            CUBLASCHECK(cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
+                                    &alpha, B, N, A, K, &beta, C, N));
+#else
             float alpha = 1.f, beta = 0.f;
             CUBLASCHECK(cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
                                     &alpha, B, N, A, K, &beta, C, N));
+#endif
             break;
         }
         default:
@@ -293,28 +297,28 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-void check_matrix_col_row(float* c, float* ref_c, int M, int N) {
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            if (ref_c[i * N + j] != c[i + j * M]) {
-                fprintf(stderr,
-                        "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
-                        ref_c[i * N + j], c[i + j * M]);
-                return;
-            }
-        }
-    }
-}
+// void check_matrix_col_row(float* c, float* ref_c, int M, int N) {
+//     for (int i = 0; i < M; i++) {
+//         for (int j = 0; j < N; j++) {
+//             if (ref_c[i * N + j] != c[i + j * M]) {
+//                 fprintf(stderr,
+//                         "check failed: c[%d][%d], ref: %f, kernel: %f\n", i,
+//                         j, ref_c[i * N + j], c[i + j * M]);
+//                 return;
+//             }
+//         }
+//     }
+// }
 
-void check_matrix_col_col(float* c, float* ref_c, int M, int N) {
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            if (ref_c[i + j * M] != c[i + j * M]) {
-                fprintf(stderr,
-                        "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
-                        ref_c[i + j * M], c[i + j * M]);
-                return;
-            }
-        }
-    }
-}
+// void check_matrix_col_col(float* c, float* ref_c, int M, int N) {
+//     for (int i = 0; i < M; i++) {
+//         for (int j = 0; j < N; j++) {
+//             if (ref_c[i + j * M] != c[i + j * M]) {
+//                 fprintf(stderr,
+//                         "check failed: c[%d][%d], ref: %f, kernel: %f\n", i,
+//                         j, ref_c[i + j * M], c[i + j * M]);
+//                 return;
+//             }
+//         }
+//     }
+// }
