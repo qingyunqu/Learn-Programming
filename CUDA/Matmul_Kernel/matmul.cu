@@ -141,7 +141,7 @@ __global__ void init_matrix(T* a, int row, int column, float value) {
     int r = blockDim.y * blockIdx.y + threadIdx.y;
     int c = blockDim.x * blockIdx.x + threadIdx.x;
     if (r < row && c < column) {
-        a[r * column + c] = static_cast<T>(value);
+        a[r * column + c] = static_cast<T>(value + threadIdx.x);
     }
 }
 
@@ -175,14 +175,18 @@ int main(int argc, char** argv) {
     CUBLASCHECK(cublasCreate(&handle));
 
 // #define FP162FP16
-//     using Ti = __half;
-//     using To = __half;
-#define FP162FP32
-    using Ti = __half;
-    using To = float;
-// #define FP322FP32
-//     using Ti = float;
-//     using To = float;
+// #define FP162FP32
+#define FP322FP32
+
+#ifdef FP162FP16
+    using Ti = __half; using To = __half;
+#endif
+#ifdef FP162FP32
+    using Ti = __half; using To = float;
+#endif
+#ifdef FP322FP32
+    using Ti = float; using To = float;
+#endif
 
     Ti *A, *B;
     To *C, *ref_C;
@@ -260,6 +264,7 @@ int main(int argc, char** argv) {
             break;
         }
         case 5: {
+            // cublas normal is Column Major
             // CT = (AB)T = BT @ AT
             printf("M: %d, N: %d, K: %d, kernel: cublas ", M, N, K);
 #ifdef FP162FP16
@@ -270,6 +275,7 @@ int main(int argc, char** argv) {
 #endif
 #ifdef FP162FP32
             float alpha = 1.f, beta = 0.f;
+            /* IO in FP16/FP32, computation in float */
             CUBLASCHECK(cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
                 &alpha, B, CUDA_R_16F, N, A, CUDA_R_16F, K, &beta, C, CUDA_R_32F, N));
 #endif
