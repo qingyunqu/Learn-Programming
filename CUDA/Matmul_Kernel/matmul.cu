@@ -35,8 +35,7 @@ const char* cublasGetErrorString(cublasStatus_t status) {
     return "unknown error";
 }
 
-// M=1024, N=1024, K=1024  : 4.938048ms
-template <typename Ti, typename To>
+/*template <typename Ti, typename To>
 __global__ void matmul(Ti* A, Ti* B, To* C, int M, int N, int K) {
     int col = blockIdx.y * blockDim.y + threadIdx.y;
     int row = blockIdx.x * blockDim.x + threadIdx.x;
@@ -48,10 +47,14 @@ __global__ void matmul(Ti* A, Ti* B, To* C, int M, int N, int K) {
         C[row * N + col] = value;
     }
 }
+dim3 block(16, 16);
+dim3 grid(CEIL_DIV(M, block.x), CEIL_DIV(N, block.y)); // row major: MxN
+matmul<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
+*/
 
 // M=1024, N=1024, K=1024  : 1.000160ms
 template <typename Ti, typename To>
-__global__ void matmul1(Ti* A, Ti* B, To* C, int M, int N, int K) {
+__global__ void matmul(Ti* A, Ti* B, To* C, int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < M && col < N) {
@@ -63,8 +66,7 @@ __global__ void matmul1(Ti* A, Ti* B, To* C, int M, int N, int K) {
     }
 }
 
-// M=1024, N=1024, K=1024  : 2.476992ms
-#define TILE_WIDTH 16
+/*#define TILE_WIDTH 16
 template <typename Ti, typename To>
 __global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N, int K) {
     __shared__ Ti ds_A[TILE_WIDTH][TILE_WIDTH];
@@ -99,10 +101,15 @@ __global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N, int K) {
         C[row * N + col] = value;
     }
 }
+dim3 block(TILE_WIDTH, TILE_WIDTH);
+dim3 grid(CEIL_DIV(M, block.x), CEIL_DIV(N, block.y)); // row major: MxN
+matmul_share<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
+*/
 
 // M=1024, N=1024, K=1024  : 1.926304ms
+#define TILE_WIDTH 16
 template <typename Ti, typename To>
-__global__ void matmul_share1(Ti* A, Ti* B, To* C, int M, int N, int K) {
+__global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N, int K) {
     __shared__ Ti ds_A[TILE_WIDTH][TILE_WIDTH];
     __shared__ Ti ds_B[TILE_WIDTH][TILE_WIDTH];
     int bx = blockIdx.x;
@@ -220,34 +227,18 @@ int main(int argc, char** argv) {
     CUDACHECK(cudaEventRecord(start, 0));
     switch (kernel) {
         case 0: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul          ", M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul         ", M, N, K);
             dim3 block(16, 16);
-            dim3 grid(CEIL_DIV(M, block.x), CEIL_DIV(N, block.y));
+            dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y)); // row major: MxN
             matmul<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
-        case 1: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul1         ", M, N, K);
-            dim3 block(16, 16);
-            dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
-            matmul1<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
-            after_kernel_launch();
-            break;
-        }
-        case 2: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul_share    ", M, N, K);
-            dim3 block(TILE_WIDTH, TILE_WIDTH);
-            dim3 grid(CEIL_DIV(M, block.x), CEIL_DIV(N, block.y));
-            matmul_share<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
-            after_kernel_launch();
-            break;
-        }
         case 3: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul_share1   ", M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul_share   ", M, N, K);
             dim3 block(TILE_WIDTH, TILE_WIDTH);
             dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
-            matmul_share1<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
+            matmul_share<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
