@@ -107,32 +107,34 @@ matmul_share<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
 */
 
 // M=1024, N=1024, K=1024  : 1.926304ms
-#define TILE_WIDTH 16
+#define TILE_M 16
+#define TILE_N 16
+#define TILE_K 16
 template <typename Ti, typename To>
-__global__ void matmul_share(Ti* A, Ti* B, To* C, int M, int N, int K) {
-    __shared__ Ti ds_A[TILE_WIDTH][TILE_WIDTH];
-    __shared__ Ti ds_B[TILE_WIDTH][TILE_WIDTH];
+__global__ void matmul_tile(Ti* A, Ti* B, To* C, int M, int N, int K) {
+    __shared__ Ti ds_A[TILE_M][TILE_K];
+    __shared__ Ti ds_B[TILE_K][TILE_N];
     int bx = blockIdx.x;
     int by = blockIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
-    int row = by * TILE_WIDTH + ty;
-    int col = bx * TILE_WIDTH + tx;
+    int row = by * TILE_M + ty;
+    int col = bx * TILE_N + tx;
 
     To value = static_cast<To>(0);
-    for (int t = 0; t < (K + TILE_WIDTH - 1) / TILE_WIDTH; t++) {
-        if (row < M && t * TILE_WIDTH + tx < K) {
-            ds_A[ty][tx] = A[row * K + t * TILE_WIDTH + tx];
+    for (int t = 0; t < CEIL_DIV(K, TILE_K); t++) {
+        if (row < M && t * TILE_K + tx < K) {
+            ds_A[ty][tx] = A[row * K + t * TILE_K + tx];
         } else {
             ds_A[ty][tx] = static_cast<To>(0);
         }
-        if (col < N && t * TILE_WIDTH + ty < K) {
-            ds_B[ty][tx] = B[(t * TILE_WIDTH + ty) * N + col];
+        if (col < N && t * TILE_K + ty < K) {
+            ds_B[ty][tx] = B[(t * TILE_K + ty) * N + col];
         } else {
             ds_B[ty][tx] = static_cast<To>(0);
         }
         __syncthreads();
-        for (int k = 0; k < TILE_WIDTH; k++) {
+        for (int k = 0; k < TILE_K; k++) {
             value += static_cast<To>(ds_A[ty][k] * ds_B[k][tx]);
         }
         __syncthreads();
@@ -234,11 +236,11 @@ int main(int argc, char** argv) {
             after_kernel_launch();
             break;
         }
-        case 3: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul_share   ", M, N, K);
-            dim3 block(TILE_WIDTH, TILE_WIDTH);
+        case 1: {
+            printf("M: %d, N: %d, K: %d, kernel: matmul_tile(TILE_M: %d, TILE_N: %d, TILE_K: %d) ", M, N, K, TILE_M, TILE_N, TILE_K);
+            dim3 block(TILE_N, TILE_M);
             dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
-            matmul_share<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
+            matmul_tile<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
