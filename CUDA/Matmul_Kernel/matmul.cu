@@ -146,11 +146,11 @@ __global__ void matmul_tile(Ti* A, Ti* B, To* C, int M, int N, int K) {
 }
 
 template <typename T>
-__global__ void init_matrix(T* a, int row, int column, float value) {
-    int r = blockDim.y * blockIdx.y + threadIdx.y;
-    int c = blockDim.x * blockIdx.x + threadIdx.x;
-    if (r < row && c < column) {
-        a[r * column + c] = static_cast<T>(value + threadIdx.x);
+void init_matrix(T* a, int M, int N) {
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            a[i * N + j] = static_cast<T>(rand() % 100);
+        }
     }
 }
 
@@ -161,7 +161,8 @@ void check_matrix(T* c, T* ref_c, int M, int N) {
             if (c[i * N + j] != ref_c[i * N + j]) {
                 fprintf(stderr,
                         "check failed: c[%d][%d], ref: %f, kernel: %f\n", i, j,
-                        ref_c[i * N + j], c[i * N + j]);
+                        static_cast<float>(ref_c[i * N + j]),
+                        static_cast<float>(c[i * N + j]));
                 return;
             }
         }
@@ -183,18 +184,19 @@ int main(int argc, char** argv) {
     cublasHandle_t handle;
     CUBLASCHECK(cublasCreate(&handle));
 
-// #define FP162FP16
-// #define FP162FP32
-#define FP322FP32
+#define FP162FP16
 
 #ifdef FP162FP16
-    using Ti = __half; using To = __half;
+    using Ti = __half;
+    using To = __half;
 #endif
 #ifdef FP162FP32
-    using Ti = __half; using To = float;
+    using Ti = __half;
+    using To = float;
 #endif
 #ifdef FP322FP32
-    using Ti = float; using To = float;
+    using Ti = float;
+    using To = float;
 #endif
 
     Ti *A, *B;
@@ -205,14 +207,16 @@ int main(int argc, char** argv) {
     CUDACHECK(cudaMalloc((void**)&ref_C, M * N * sizeof(To)));
 
     {
-        dim3 block(16, 16);
-        dim3 grid(CEIL_DIV(K, block.x), CEIL_DIV(M, block.y));
-        init_matrix<Ti><<<grid, block>>>(A, M, K, 1.f);
+        Ti* a = (Ti*)malloc(M * K * sizeof(Ti));
+        init_matrix<Ti>(a, M, K);
+        CUDACHECK(cudaMemcpy(A, a, M * K * sizeof(Ti), cudaMemcpyHostToDevice));
+        free(a);
     }
     {
-        dim3 block(16, 16);
-        dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(K, block.y));
-        init_matrix<Ti><<<grid, block>>>(B, K, N, 2.f);
+        Ti* b = (Ti*)malloc(K * N * sizeof(Ti));
+        init_matrix<Ti>(b, K, N);
+        CUDACHECK(cudaMemcpy(B, b, K * N * sizeof(Ti), cudaMemcpyHostToDevice));
+        free(b);
     }
     {
         using RowMajor = cutlass::layout::RowMajor;
@@ -229,15 +233,18 @@ int main(int argc, char** argv) {
     CUDACHECK(cudaEventRecord(start, 0));
     switch (kernel) {
         case 0: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul         ", M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul           ", M, N, K);
             dim3 block(16, 16);
-            dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y)); // row major: MxN
+            dim3 grid(CEIL_DIV(N, block.x),
+                      CEIL_DIV(M, block.y));  // row major: MxN
             matmul<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
         case 1: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul_tile(TILE_M: %d, TILE_N: %d, TILE_K: %d) ", M, N, K, TILE_M, TILE_N, TILE_K);
+            printf("M: %d, N: %d, K: %d, kernel: matmul_tile(TILE_M: %d, "
+                   "TILE_N: %d, TILE_K: %d) ",
+                   M, N, K, TILE_M, TILE_N, TILE_K);
             dim3 block(TILE_N, TILE_M);
             dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
             matmul_tile<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
@@ -245,7 +252,7 @@ int main(int argc, char** argv) {
             break;
         }
         case 4: {
-            printf("M: %d, N: %d, K: %d, kernel: cutlass_default ", M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: cutlass_default  ", M, N, K);
             using RowMajor = cutlass::layout::RowMajor;
             using ColMajor = cutlass::layout::ColumnMajor;
             using Gemm = cutlass::gemm::device::Gemm<Ti, RowMajor, Ti, RowMajor,
@@ -259,9 +266,10 @@ int main(int argc, char** argv) {
         case 5: {
             // cublas normal is Column Major
             // CT = (AB)T = BT @ AT
-            printf("M: %d, N: %d, K: %d, kernel: cublas ", M, N, K);
+            printf("M: %d, N: %d, K: %d, kernel: cublas           ", M, N, K);
 #ifdef FP162FP16
-            //__half alpha = static_cast<__half>(1.f), beta = static_cast<__half>(0.f);
+            //__half alpha = static_cast<__half>(1.f), beta =
+            // static_cast<__half>(0.f);
             __half alpha = __float2half(1.f), beta = __float2half(0.f);
             CUBLASCHECK(cublasHgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
                                     &alpha, B, N, A, K, &beta, C, N));
@@ -270,7 +278,8 @@ int main(int argc, char** argv) {
             float alpha = 1.f, beta = 0.f;
             /* IO in FP16/FP32, computation in float */
             CUBLASCHECK(cublasSgemmEx(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
-                &alpha, B, CUDA_R_16F, N, A, CUDA_R_16F, K, &beta, C, CUDA_R_32F, N));
+                                      &alpha, B, CUDA_R_16F, N, A, CUDA_R_16F,
+                                      K, &beta, C, CUDA_R_32F, N));
 #endif
 #ifdef FP322FP32
             float alpha = 1.f, beta = 0.f;
