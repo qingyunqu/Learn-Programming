@@ -107,34 +107,34 @@ matmul_share<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
 */
 
 // M=1024, N=1024, K=1024  : 1.926304ms
-#define TILE_M 16
-#define TILE_N 16
-#define TILE_K 16
+#define TILE_M_1 16
+#define TILE_N_1 16
+#define TILE_K_1 16
 template <typename Ti, typename To>
 __global__ void matmul_tile(Ti* A, Ti* B, To* C, int M, int N, int K) {
-    __shared__ Ti ds_A[TILE_M][TILE_K];
-    __shared__ Ti ds_B[TILE_K][TILE_N];
+    __shared__ Ti ds_A[TILE_M_1][TILE_K_1];
+    __shared__ Ti ds_B[TILE_K_1][TILE_N_1];
     int bx = blockIdx.x;
     int by = blockIdx.y;
     int tx = threadIdx.x;
     int ty = threadIdx.y;
-    int row = by * TILE_M + ty;
-    int col = bx * TILE_N + tx;
+    int row = by * TILE_M_1 + ty;
+    int col = bx * TILE_N_1 + tx;
 
     To value = static_cast<To>(0);
-    for (int t = 0; t < CEIL_DIV(K, TILE_K); t++) {
-        if (row < M && t * TILE_K + tx < K) {
-            ds_A[ty][tx] = A[row * K + t * TILE_K + tx];
+    for (int t = 0; t < CEIL_DIV(K, TILE_K_1); t++) {
+        if (row < M && t * TILE_K_1 + tx < K) {
+            ds_A[ty][tx] = A[row * K + t * TILE_K_1 + tx];
         } else {
-            ds_A[ty][tx] = static_cast<To>(0);
+            ds_A[ty][tx] = static_cast<Ti>(0);
         }
-        if (col < N && t * TILE_K + ty < K) {
-            ds_B[ty][tx] = B[(t * TILE_K + ty) * N + col];
+        if (col < N && t * TILE_K_1 + ty < K) {
+            ds_B[ty][tx] = B[(t * TILE_K_1 + ty) * N + col];
         } else {
-            ds_B[ty][tx] = static_cast<To>(0);
+            ds_B[ty][tx] = static_cast<Ti>(0);
         }
         __syncthreads();
-        for (int k = 0; k < TILE_K; k++) {
+        for (int k = 0; k < TILE_K_1; k++) {
             value += static_cast<To>(ds_A[ty][k] * ds_B[k][tx]);
         }
         __syncthreads();
@@ -142,6 +142,20 @@ __global__ void matmul_tile(Ti* A, Ti* B, To* C, int M, int N, int K) {
 
     if (row < M && col < N) {
         C[row * N + col] = value;
+    }
+}
+
+#define TILE_M_2 128
+#define TILE_N_2 128
+#define TILE_K_2 16
+template <typename Ti, typename To>
+__global__ void matmul_tile_megengine(Ti* A, Ti* B, To* C, int M, int N,
+                                      int K) {
+    __shared__ Ti ds_A[TILE_M_2][TILE_K_2];
+    __shared__ Ti ds_B[TILE_K_2][TILE_N_2];
+    int warp_id = threadIdx.x >> 5;
+    for(int k = 0; k < CEIL_DIV(K, TILE_K_2); k++) {
+        
     }
 }
 
@@ -184,7 +198,7 @@ int main(int argc, char** argv) {
     cublasHandle_t handle;
     CUBLASCHECK(cublasCreate(&handle));
 
-#define FP162FP16
+#define FP322FP32
 
 #ifdef FP162FP16
     using Ti = __half;
@@ -244,10 +258,21 @@ int main(int argc, char** argv) {
         case 1: {
             printf("M: %d, N: %d, K: %d, kernel: matmul_tile(TILE_M: %d, "
                    "TILE_N: %d, TILE_K: %d) ",
-                   M, N, K, TILE_M, TILE_N, TILE_K);
-            dim3 block(TILE_N, TILE_M);
+                   M, N, K, TILE_M_1, TILE_N_1, TILE_K_1);
+            dim3 block(TILE_N_1, TILE_M_1);
             dim3 grid(CEIL_DIV(N, block.x), CEIL_DIV(M, block.y));
             matmul_tile<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
+            after_kernel_launch();
+            break;
+        }
+        case 2: {
+            printf("M: %d, N: %d, K: %d, kernel: matmul_tile_megengine(TILE_M: "
+                   "%d, "
+                   "TILE_N: %d, TILE_K: %d) ",
+                   M, N, K, TILE_M_2, TILE_N_2, TILE_K_2);
+            dim3 block(128);
+            dim3 grid(CEIL_DIV(N, TILE_N_2), CEIL_DIV(M, TILE_M_2));
+            matmul_tile_megengine<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
             after_kernel_launch();
             break;
         }
