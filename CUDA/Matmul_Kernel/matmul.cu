@@ -11,7 +11,11 @@
 
 #include "cublas_v2.h"
 
+#include "mma.h"
+using namespace nvcuda;
+
 #define CEIL_DIV(a, b) (((a) + (b)-1) / (b))
+#define WARPSIZE 32
 
 const char* cublasGetErrorString(cublasStatus_t status) {
     switch (status) {
@@ -145,19 +149,65 @@ __global__ void matmul_tile(Ti* A, Ti* B, To* C, int M, int N, int K) {
     }
 }
 
-#define TILE_M_2 128
-#define TILE_N_2 128
-#define TILE_K_2 16
-template <typename Ti, typename To>
-__global__ void matmul_tile_megengine(Ti* A, Ti* B, To* C, int M, int N,
-                                      int K) {
-    __shared__ Ti ds_A[TILE_M_2][TILE_K_2];
-    __shared__ Ti ds_B[TILE_K_2][TILE_N_2];
-    int warp_id = threadIdx.x >> 5;
-    for(int k = 0; k < CEIL_DIV(K, TILE_K_2); k++) {
-        
+// #define TILE_M_2 128
+// #define TILE_N_2 128
+// #define TILE_K_2 16
+// template <typename Ti, typename To>
+// __global__ void matmul_tile_megengine(Ti* A, Ti* B, To* C, int M, int N,
+//                                       int K) {
+//     __shared__ Ti ds_A[TILE_M_2][TILE_K_2];
+//     __shared__ Ti ds_B[TILE_K_2][TILE_N_2];
+//     int warp_id = threadIdx.x >> 5;
+//     for(int k = 0; k < CEIL_DIV(K, TILE_K_2); k++) {
+
+//     }
+// }
+
+#define WMMA_M 16
+#define WMMA_N 16
+#define WMMA_K 16
+__global__ void wmma_fp16(__half* a, __half* b, float* c, int M, int N, int K, float alpha, float beta) {
+    int lda = K;
+    int ldb = N;
+    int ldc = N;
+
+    int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / WARPSIZE;
+    int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
+
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
+    wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
+
+    wmma::fill_fragment(acc_frag, 0.0f);
+  
+    for (int i = 0; i < K; i += WMMA_K) {
+      int aRow = warpM * WMMA_M;
+      int aCol = i;
+
+      int bRow = i;
+      int bCol = warpN * WMMA_N;
+
+      if (aRow < M && aCol < K && bRow < K && bCol < N) {
+        wmma::load_matrix_sync(a_frag, a + aRow * lda + aCol, lda);
+        wmma::load_matrix_sync(b_frag, b + bRow * lda + bCol, ldb);
+
+        wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
+      }
+    }
+
+    int cRow = warpM * WMMA_M;
+    int cCol = warpN * WMMA_N;
+
+    if (cRow < M && cCol < N) {
+      wmma::load_matrix_sync(c_frag, c + cRow * ldc + cCol, ldc, wmma::mem_row_major);
+      for (int i = 0; i < c_frag.num_elements; ++i) {
+        c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
+      }
+      wmma::store_matrix_sync(c + cRow * ldc + cCol, c_frag, ldc, wmma::mem_row_major);
     }
 }
+
 
 template <typename T>
 void init_matrix(T* a, int M, int N) {
@@ -198,7 +248,7 @@ int main(int argc, char** argv) {
     cublasHandle_t handle;
     CUBLASCHECK(cublasCreate(&handle));
 
-#define FP322FP32
+#define FP162FP32
 
 #ifdef FP162FP16
     using Ti = __half;
@@ -265,15 +315,25 @@ int main(int argc, char** argv) {
             after_kernel_launch();
             break;
         }
-        case 2: {
-            printf("M: %d, N: %d, K: %d, kernel: matmul_tile_megengine(TILE_M: "
-                   "%d, "
-                   "TILE_N: %d, TILE_K: %d) ",
-                   M, N, K, TILE_M_2, TILE_N_2, TILE_K_2);
-            dim3 block(128);
-            dim3 grid(CEIL_DIV(N, TILE_N_2), CEIL_DIV(M, TILE_M_2));
-            matmul_tile_megengine<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
+        // case 2: {
+        //     printf("M: %d, N: %d, K: %d, kernel: matmul_tile_megengine(TILE_M: "
+        //            "%d, "
+        //            "TILE_N: %d, TILE_K: %d) ",
+        //            M, N, K, TILE_M_2, TILE_N_2, TILE_K_2);
+        //     dim3 block(128);
+        //     dim3 grid(CEIL_DIV(N, TILE_N_2), CEIL_DIV(M, TILE_M_2));
+        //     matmul_tile_megengine<Ti, To><<<grid, block>>>(A, B, C, M, N, K);
+        //     after_kernel_launch();
+        //     break;
+        // }
+        case 3: {
+#ifdef FP162FP32
+            printf("M: %d, N: %d, K: %d, kernel: wmma             ", M, N, K);
+            dim3 block(128, 4);
+            dim3 grid(CEIL_DIV(M, WMMA_M * block.x / WARPSIZE), CEIL_DIV(N, WMMA_N * block.y));
+            wmma_fp16<<<grid, block>>>(A, B, C, M, N, K, 1.f, 0.f);
             after_kernel_launch();
+#endif
             break;
         }
         case 4: {
