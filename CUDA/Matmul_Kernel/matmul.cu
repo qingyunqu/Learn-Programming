@@ -166,7 +166,7 @@ __global__ void matmul_tile(Ti* A, Ti* B, To* C, int M, int N, int K) {
 #define WMMA_M 16
 #define WMMA_N 16
 #define WMMA_K 16
-__global__ void wmma_fp16(__half* a, __half* b, float* c, int M, int N, int K, float alpha, float beta) {
+__global__ void wmma_fp16(half* A, half* B, float* C, int M, int N, int K, float alpha, float beta) {
     int lda = K;
     int ldb = N;
     int ldc = N;
@@ -174,23 +174,23 @@ __global__ void wmma_fp16(__half* a, __half* b, float* c, int M, int N, int K, f
     int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / WARPSIZE;
     int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
 
-    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> a_frag;
-    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, __half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> b_frag;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> c_frag;
 
     wmma::fill_fragment(acc_frag, 0.0f);
   
-    for (int i = 0; i < K; i += WMMA_K) {
+    for (int k = 0; k < K; k += WMMA_K) {
       int aRow = warpM * WMMA_M;
-      int aCol = i;
+      int aCol = k;
 
-      int bRow = i;
+      int bRow = k;
       int bCol = warpN * WMMA_N;
 
       if (aRow < M && aCol < K && bRow < K && bCol < N) {
-        wmma::load_matrix_sync(a_frag, a + aRow * lda + aCol, lda);
-        wmma::load_matrix_sync(b_frag, b + bRow * lda + bCol, ldb);
+        wmma::load_matrix_sync(a_frag, A + aRow * lda + aCol, lda);
+        wmma::load_matrix_sync(b_frag, B + bRow * ldb + bCol, ldb);
 
         wmma::mma_sync(acc_frag, a_frag, b_frag, acc_frag);
       }
@@ -200,11 +200,11 @@ __global__ void wmma_fp16(__half* a, __half* b, float* c, int M, int N, int K, f
     int cCol = warpN * WMMA_N;
 
     if (cRow < M && cCol < N) {
-      wmma::load_matrix_sync(c_frag, c + cRow * ldc + cCol, ldc, wmma::mem_row_major);
+      wmma::load_matrix_sync(c_frag, C + cRow * ldc + cCol, ldc, wmma::mem_row_major);
       for (int i = 0; i < c_frag.num_elements; ++i) {
         c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
       }
-      wmma::store_matrix_sync(c + cRow * ldc + cCol, c_frag, ldc, wmma::mem_row_major);
+      wmma::store_matrix_sync(C + cRow * ldc + cCol, c_frag, ldc, wmma::mem_row_major);
     }
 }
 
@@ -251,11 +251,11 @@ int main(int argc, char** argv) {
 #define FP162FP32
 
 #ifdef FP162FP16
-    using Ti = __half;
-    using To = __half;
+    using Ti = half;
+    using To = half;
 #endif
 #ifdef FP162FP32
-    using Ti = __half;
+    using Ti = half;
     using To = float;
 #endif
 #ifdef FP322FP32
