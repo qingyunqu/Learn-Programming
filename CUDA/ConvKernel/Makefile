@@ -5,7 +5,7 @@ HEADPATH := -I/root/share/cutlass/include -I/root/share/cutlass/tools/util/inclu
 all: target
 
 target: conv.cu
-	$(CXX) $(CXXFLAGS) $< -o test -lcublas $(HEADPATH)
+	$(CXX) $(CXXFLAGS) $< -o test -lcudnn $(HEADPATH)
 
 .phony: clean
 
