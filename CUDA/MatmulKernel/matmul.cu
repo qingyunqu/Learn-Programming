@@ -7,6 +7,7 @@
 #include <cuda_runtime.h>
 #include "../check.h"
 
+#include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
 
 #include "cublas_v2.h"
@@ -128,7 +129,7 @@ __global__ void matmul_tile(Ti* A, Ti* B, To* C, int M, int N, int K) {
     To value = static_cast<To>(0);
     for (int t = 0; t < CEIL_DIV(K, TILE_K_1); t++) {
         if (row < M && t * TILE_K_1 + tx < K) {
-            ds_A[ty][tx] = A[row * K + t * TILE_K_1 + tx];
+            ds_A[ty][tx] = A[row * K + (t * TILE_K_1 + tx)];
         } else {
             ds_A[ty][tx] = static_cast<Ti>(0);
         }
@@ -201,6 +202,7 @@ __global__ void wmma_fp16(half* A, half* B, float* C, int M, int N, int K, float
 
     if (cRow < M && cCol < N) {
       wmma::load_matrix_sync(c_frag, C + cRow * ldc + cCol, ldc, wmma::mem_row_major);
+      // printf("c_frag.num_elements: %d\n", c_frag.num_elements);  8
       for (int i = 0; i < c_frag.num_elements; ++i) {
         c_frag.x[i] = alpha * acc_frag.x[i] + beta * c_frag.x[i];
       }
@@ -241,6 +243,7 @@ int main(int argc, char** argv) {
     const int K = atoi(argv[3]);
     int kernel = atoi(argv[4]);
 
+    CUDACHECK(cudaSetDevice(0));
     cudaEvent_t start, stop;
     float elapsedTime;
     CUDACHECK(cudaEventCreate(&start));
@@ -340,12 +343,22 @@ int main(int argc, char** argv) {
             printf("M: %d, N: %d, K: %d, kernel: cutlass_default  ", M, N, K);
             using RowMajor = cutlass::layout::RowMajor;
             using ColMajor = cutlass::layout::ColumnMajor;
-            using Gemm = cutlass::gemm::device::Gemm<Ti, RowMajor, Ti, RowMajor,
-                                                     To, RowMajor>;
+            using ThreadBlockShape = cutlass::gemm::GemmShape<128, 64, 8>;  // <- threadblock tile M = 128, N = 128, K = 32
+            using WarpShape = cutlass::gemm::GemmShape<64, 32, 8>;  // <- warp tile M = 32, N = 32, K = 32
+            using InstructionShape = cutlass::gemm::GemmShape<1, 1, 1>;  // <- MMA Op tile M = 8, N = 8, K = 4
+            using Gemm = cutlass::gemm::device::Gemm<Ti, RowMajor,
+                                                     Ti, RowMajor,
+                                                     To, RowMajor,
+                                                     To,
+                                                     cutlass::arch::OpClassSimt,
+                                                     cutlass::arch::Sm70,
+                                                     ThreadBlockShape,
+                                                     WarpShape,
+                                                     InstructionShape>;
             Gemm::Arguments args({M, N, K}, {A, K}, {B, N}, {C, N}, {C, N},
                                  {1.f, 0.f});
             Gemm gemm;
-            CUTLASS_CHECK(gemm(args));
+            CUTLASS_CHECK(gemm(args, nullptr, 0));
             break;
         }
         case 5: {
