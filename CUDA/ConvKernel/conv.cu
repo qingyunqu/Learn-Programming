@@ -32,12 +32,14 @@ using To = float;
     CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
     printf("time: %fms\n", elapsedTime);
 
-    CUDACHECK(cudaEventRecord(start, stream));
-    conv.forward();
-    CUDACHECK(cudaEventRecord(stop, stream));
-    CUDACHECK(cudaEventSynchronize(stop));
-    CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
-    printf("time: %fms\n", elapsedTime);
+    for(int i = 0; i <= 10; i++) {
+        CUDACHECK(cudaEventRecord(start, stream));
+        conv.forward();
+        CUDACHECK(cudaEventRecord(stop, stream));
+        CUDACHECK(cudaEventSynchronize(stop));
+        CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
+        printf("time: %fms\n", elapsedTime);
+    }
 
     CUDACHECK(cudaEventDestroy(start));
     CUDACHECK(cudaEventDestroy(stop));
