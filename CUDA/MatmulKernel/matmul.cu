@@ -297,7 +297,6 @@ int main(int argc, char** argv) {
                              {1.f, 0.f});
         Gemm gemm;
         CUTLASS_CHECK(gemm(args));
-        after_kernel_launch();
     }
 
     CUDACHECK(cudaEventRecord(start, 0));
@@ -341,16 +340,17 @@ int main(int argc, char** argv) {
 #endif
             break;
         }
-        case 4: {
-            printf("M: %d, N: %d, K: %d, kernel: cutlass_default  ", M, N, K);
+        case 40: {
+            printf("M: %d, N: %d, K: %d, kernel: cutlass default  ", M, N, K);
             using RowMajor = cutlass::layout::RowMajor;
             using ColMajor = cutlass::layout::ColumnMajor;
-            using MMAOp = cutlass::arch::OpClassTensorOp;
+            using MMAOp = cutlass::arch::OpClassSimt;
             using Sm = cutlass::arch::Sm70;
-            using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
-            using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;  // <- warp tile M = 32, N = 32, K = 32
-            using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
+            using ThreadBlockShape = cutlass::gemm::GemmShape<128, 64, 8>;  // <- threadblock tile M = 128, N = 128, K = 32
+            using WarpShape = cutlass::gemm::GemmShape<64, 32, 8>;  // <- warp tile M = 32, N = 32, K = 32
+            using InstructionShape = cutlass::gemm::GemmShape<1, 1, 1>;  // <- MMA Op tile M = 8, N = 8, K = 4
             using Tinput = cutlass::half_t;
+            const int split_k = 1;
             using Gemm = cutlass::gemm::device::Gemm<Tinput, RowMajor,
                                                      Tinput, RowMajor,
                                                      To, RowMajor,
@@ -360,8 +360,60 @@ int main(int argc, char** argv) {
                                                      ThreadBlockShape,
                                                      WarpShape,
                                                      InstructionShape>;
-            Gemm::Arguments args(cutlass::gemm::GemmCoord{M, N, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)A, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)B, N}, cutlass::TensorRef<To, RowMajor>{C, N}, cutlass::TensorRef<To, RowMajor>{C, N},
-                                 {1.f, 0.f}, 1);
+            typename Gemm::Arguments args(cutlass::gemm::GemmCoord{M, N, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)A, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)B, N}, cutlass::TensorRef<To, RowMajor>{C, N}, cutlass::TensorRef<To, RowMajor>{C, N},
+                                 {1.f, 0.f}, split_k);
+            Gemm gemm;
+            CUTLASS_CHECK(gemm(args));
+            break;
+        }
+        case 41: {
+            printf("M: %d, N: %d, K: %d, kernel: cutlass tensorwmmaop  ", M, N, K);
+            using RowMajor = cutlass::layout::RowMajor;
+            using ColMajor = cutlass::layout::ColumnMajor;
+            using MMAOp = cutlass::arch::OpClassWmmaTensorOp;
+            using Sm = cutlass::arch::Sm70;
+            using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+            using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;  // <- warp tile M = 32, N = 32, K = 32
+            using InstructionShape = cutlass::gemm::GemmShape<16, 16, 16>;  // <- MMA Op tile M = 8, N = 8, K = 4
+            using Tinput = cutlass::half_t;
+            const int split_k = 1;
+            using Gemm = cutlass::gemm::device::Gemm<Tinput, RowMajor,
+                                                     Tinput, RowMajor,
+                                                     To, RowMajor,
+                                                     To,
+                                                     MMAOp,
+                                                     Sm,
+                                                     ThreadBlockShape,
+                                                     WarpShape,
+                                                     InstructionShape>;
+            typename Gemm::Arguments args(cutlass::gemm::GemmCoord{M, N, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)A, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)B, N}, cutlass::TensorRef<To, RowMajor>{C, N}, cutlass::TensorRef<To, RowMajor>{C, N},
+                                 {1.f, 0.f}, split_k);
+            Gemm gemm;
+            CUTLASS_CHECK(gemm(args, nullptr, 0));
+            break;
+        }
+        case 42: {
+            printf("M: %d, N: %d, K: %d, kernel: cutlass tensorop  ", M, N, K);
+            using RowMajor = cutlass::layout::RowMajor;
+            using ColMajor = cutlass::layout::ColumnMajor;
+            using MMAOp = cutlass::arch::OpClassTensorOp;
+            using Sm = cutlass::arch::Sm70;
+            using ThreadBlockShape = cutlass::gemm::GemmShape<128, 128, 32>;  // <- threadblock tile M = 128, N = 128, K = 32
+            using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;  // <- warp tile M = 32, N = 32, K = 32
+            using InstructionShape = cutlass::gemm::GemmShape<8, 8, 4>;  // <- MMA Op tile M = 8, N = 8, K = 4
+            using Tinput = cutlass::half_t;
+            const int split_k = 1;
+            using Gemm = cutlass::gemm::device::Gemm<Tinput, RowMajor,
+                                                     Tinput, RowMajor,
+                                                     To, RowMajor,
+                                                     To,
+                                                     MMAOp,
+                                                     Sm,
+                                                     ThreadBlockShape,
+                                                     WarpShape,
+                                                     InstructionShape>;
+            typename Gemm::Arguments args(cutlass::gemm::GemmCoord{M, N, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)A, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)B, N}, cutlass::TensorRef<To, RowMajor>{C, N}, cutlass::TensorRef<To, RowMajor>{C, N},
+                                 {1.f, 0.f}, split_k);
             Gemm gemm;
             CUTLASS_CHECK(gemm(args, nullptr, 0));
             break;
