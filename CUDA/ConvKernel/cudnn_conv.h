@@ -16,18 +16,15 @@ private:
     size_t workspace_bytes = 0;
     void* d_workspace{nullptr};
     float* d_input{nullptr};
-    float* h_input{nullptr};
-    size_t output_bytes;
     float* d_output{nullptr};
-    float* h_output{nullptr};
     float* d_filter{nullptr};
-    float* h_filter{nullptr};
-    const float alpha = 1, beta = 0;
+    const float alpha = 1.f, beta = 0.f;
     cudaStream_t m_stream;
 
 public:
-    Conv(int N, int iC, int iH, int iW, int oC, int kH, int kW, int strideH,
-         int strideW, int paddingH, int paddingW, cudaStream_t stream) {
+    Conv(int N, int iC, int iH, int iW, int oC, int kH, int kW, int oH, int oW,
+         int strideH, int strideW, int paddingH, int paddingW,
+         cudaStream_t stream, float* input, float* filter, float* output) {
         this->m_stream = stream;
         auto format = CUDNN_TENSOR_NHWC;
         CUDNNCHECK(cudnnCreate(&cudnn));
@@ -42,8 +39,6 @@ public:
                                               /*image_height=*/iH,
                                               /*image_width=*/iW));
         // output
-        size_t oH = (iH + 2 * paddingH - kH) / strideH + 1;
-        size_t oW = (iW + 2 * paddingW - kW) / strideW + 1;
         CUDNNCHECK(cudnnCreateTensorDescriptor(&output_descriptor));
         CUDNNCHECK(cudnnSetTensor4dDescriptor(output_descriptor,
                                               /*format=*/format,
@@ -82,8 +77,8 @@ public:
                 /*requestedAlgoCount=*/1, &returnedAlgoCount, &perfResults));
         assert(returnedAlgoCount == 1);
         convolution_algorithm = perfResults.algo;
-        std::cout << "perfResults status: " << cudnnGetErrorString(perfResults.status)
-                  << std::endl;
+        std::cout << "perfResults status: "
+                  << cudnnGetErrorString(perfResults.status) << std::endl;
         workspace_bytes = perfResults.memory;
         // workspace size
         // CUDNNCHECK(cudnnGetConvolutionForwardWorkspaceSize(
@@ -95,28 +90,9 @@ public:
                   << std::endl;
         CUDACHECK(cudaMalloc(&d_workspace, workspace_bytes));
 
-        size_t image_bytes = N * iC * iH * iW * sizeof(float);
-        CUDACHECK(cudaMalloc(&d_input, image_bytes));
-        // h_input = (float*)malloc(image_bytes);
-        // for (int i = 0; i < N * iC * iH * iW; ++i) {
-        //     *(h_input + i) = (float(rand()) - (RAND_MAX >> 1)) / RAND_MAX;
-        // }
-        // CUDACHECK(cudaMemcpyAsync(d_input, h_input, image_bytes,
-        //                           cudaMemcpyHostToDevice, m_stream));
-
-        output_bytes = N * oC * oH * oW * sizeof(float);
-        CUDACHECK(cudaMalloc(&d_output, output_bytes));
-        // CUDACHECK(cudaMemsetAsync(d_output, 0, output_bytes, m_stream));
-        // h_output = (float*)malloc(output_bytes);
-
-        size_t filter_bytes = oC * iC * kH * kW * sizeof(float);
-        CUDACHECK(cudaMalloc(&d_filter, filter_bytes));
-        // h_filter = (float*)malloc(filter_bytes);
-        // for (int i = 0; i < oC * iC * kH * kW; ++i) {
-        //     *(h_filter + i) = (float(rand()) - (RAND_MAX >> 1)) / RAND_MAX;
-        // }
-        // CUDACHECK(cudaMemcpyAsync(d_filter, h_filter, filter_bytes,
-        //                           cudaMemcpyHostToDevice, m_stream));
+        d_input = input;
+        d_filter = filter;
+        d_output = output;
     }
 
     void forward() {
@@ -128,21 +104,9 @@ public:
                 d_output));
     }
 
-    void copyResult() {
-        CUDACHECK(cudaMemcpyAsync(h_output, d_output, output_bytes,
-                                  cudaMemcpyDeviceToHost, m_stream));
-    }
-
     cudaStream_t stream() { return this->m_stream; }
 
     ~Conv() {
-        free(h_input);
-        free(h_output);
-        free(h_filter);
-
-        CUDACHECK(cudaFree(d_input));
-        CUDACHECK(cudaFree(d_output));
-        CUDACHECK(cudaFree(d_filter));
         CUDACHECK(cudaFree(d_workspace));
 
         CUDNNCHECK(cudnnDestroyTensorDescriptor(input_descriptor));

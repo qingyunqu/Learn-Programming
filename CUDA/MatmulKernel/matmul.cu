@@ -10,8 +10,6 @@
 #include "cutlass/cutlass.h"
 #include "cutlass/tensor_ref.h"
 #include "cutlass/gemm/device/gemm.h"
-#include "cutlass/gemm/kernel/default_gemm.h"
-#include "cutlass/gemm/device/default_gemm_configuration.h"
 
 #include "cublas_v2.h"
 
@@ -361,7 +359,7 @@ int main(int argc, char** argv) {
                                                      WarpShape,
                                                      InstructionShape>;
             typename Gemm::Arguments args(cutlass::gemm::GemmCoord{M, N, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)A, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)B, N}, cutlass::TensorRef<To, RowMajor>{C, N}, cutlass::TensorRef<To, RowMajor>{C, N},
-                                 {1.f, 0.f}, split_k);
+                                          {1.f, 0.f}, split_k);
             Gemm gemm;
             CUTLASS_CHECK(gemm(args));
             break;
@@ -387,7 +385,7 @@ int main(int argc, char** argv) {
                                                      WarpShape,
                                                      InstructionShape>;
             typename Gemm::Arguments args(cutlass::gemm::GemmCoord{M, N, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)A, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)B, N}, cutlass::TensorRef<To, RowMajor>{C, N}, cutlass::TensorRef<To, RowMajor>{C, N},
-                                 {1.f, 0.f}, split_k);
+                                          {1.f, 0.f}, split_k);
             Gemm gemm;
             CUTLASS_CHECK(gemm(args, nullptr, 0));
             break;
@@ -413,7 +411,7 @@ int main(int argc, char** argv) {
                                                      WarpShape,
                                                      InstructionShape>;
             typename Gemm::Arguments args(cutlass::gemm::GemmCoord{M, N, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)A, K}, cutlass::TensorRef<Tinput, RowMajor>{(Tinput*)B, N}, cutlass::TensorRef<To, RowMajor>{C, N}, cutlass::TensorRef<To, RowMajor>{C, N},
-                                 {1.f, 0.f}, split_k);
+                                          {1.f, 0.f}, split_k);
             Gemm gemm;
             CUTLASS_CHECK(gemm(args, nullptr, 0));
             break;
