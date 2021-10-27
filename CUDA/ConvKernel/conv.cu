@@ -6,6 +6,7 @@
 #include "cutlass/conv/device/implicit_gemm_convolution.h"
 
 #include "cutlass/util/host_tensor.h"
+#include "cutlass/util/reference/host/tensor_compare.h"
 #include "cutlass/util/reference/host/tensor_fill.h"
 
 using ElementInputA = float;             // Data type of elements in input tensor
@@ -20,13 +21,39 @@ using LayoutOutput = cutlass::layout::TensorNHWC;
 
 using MMAOp = cutlass::arch::OpClassSimt;
 using SmArch = cutlass::arch::Sm70;
-using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 128>;
-using WarpShape = cutlass::gemm::GemmShape<64, 64, 128>;
+using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;
+using WarpShape = cutlass::gemm::GemmShape<64, 64, 32>;
 using InstructionShape = cutlass::gemm::GemmShape<1, 1, 1>;
 // This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 // Number of pipelines you want to use
 constexpr int NumStages = 2;
+// This code section describes the epilogue part of the kernel, we use default value
+using EpilogueOp = cutlass::epilogue::thread::LinearCombinationClamp<
+    ElementOutput,                                     // Data type of output matrix.
+    8,                                                 // The number of elements per vectorized.
+                                                       // memory access. This becomes the vector width of
+                                                       // math instructions in the epilogue too.
+    ElementAccumulator,                                // Data type of accumulator
+    ElementComputeEpilogue>;                           // Data type for alpha/beta in linear combination
+
+using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
+    ElementInputA, LayoutInputA,
+    ElementInputB, LayoutInputB,
+    ElementOutput, LayoutOutput,
+    ElementAccumulator,
+    MMAOp,
+    SmArch,
+    ThreadblockShape,
+    WarpShape,
+    InstructionShape,
+    EpilogueOp,
+    SwizzleThreadBlock,
+    NumStages,
+    cutlass::arch::OpMultiplyAddSaturate,
+    cutlass::conv::IteratorAlgorithm::kAnalytic
+  >::Kernel;
+using ImplicitGemm = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 
 
 int main() {
@@ -71,13 +98,7 @@ using To = float;
     CUDACHECK(cudaEventCreate(&start));
     CUDACHECK(cudaEventCreate(&stop));
 
-    CUDACHECK(cudaEventRecord(start, stream));
-    conv.forward();
-    CUDACHECK(cudaEventRecord(stop, stream));
-    CUDACHECK(cudaEventSynchronize(stop));
-    CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
-    printf("time: %fms\n", elapsedTime);
-
+    printf("cudnn:\n");
     for(int i = 0; i <= 10; i++) {
         CUDACHECK(cudaEventRecord(start, stream));
         conv.forward();
@@ -85,6 +106,47 @@ using To = float;
         CUDACHECK(cudaEventSynchronize(stop));
         CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
         printf("time: %fms\n", elapsedTime);
+    }
+
+    typename cutlass::conv::Mode mode = cutlass::conv::Mode::kCrossCorrelation;
+    int split_k_slices = 1;
+    typename cutlass::conv::Conv2dProblemSize problem_size(      
+        input_size,
+        filter_size,
+        {paddingH, paddingH, paddingW, paddingW},
+        {strideH, strideW},
+        {1, 1},
+        output_size,
+        mode,
+        split_k_slices);
+    typename ImplicitGemm::Arguments arguments{
+        problem_size,
+        input.device_ref(),
+        filter.device_ref(),
+        output.device_ref(),
+        output.device_ref(),
+        {ElementComputeEpilogue(1), ElementComputeEpilogue(0)},
+    };
+    ImplicitGemm implicit_gemm_op;
+    size_t workspace_size = implicit_gemm_op.get_workspace_size(arguments);
+    cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+    CUTLASS_CHECK(implicit_gemm_op.can_implement(arguments));
+    CUTLASS_CHECK(implicit_gemm_op.initialize(arguments, workspace.get()));
+    printf("cutlass:\n");
+    for(int i = 0; i <= 10; i++) {
+        CUDACHECK(cudaEventRecord(start, stream));
+        CUTLASS_CHECK(implicit_gemm_op());
+        CUDACHECK(cudaEventRecord(stop, stream));
+        CUDACHECK(cudaEventSynchronize(stop));
+        CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
+        printf("time: %fms\n", elapsedTime);
+    }
+
+    output.sync_host();
+    output_ref.sync_host();
+    bool passed = cutlass::reference::host::TensorEquals(output.host_view(), output_ref.host_view());
+    if(!passed) {
+        printf("ERROR - results miscompared.\n");
     }
 
     CUDACHECK(cudaEventDestroy(start));
