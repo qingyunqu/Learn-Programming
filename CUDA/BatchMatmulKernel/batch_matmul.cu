@@ -108,9 +108,9 @@
    int batch_count) {
  
    using Gemm = cutlass::gemm::device::GemmBatched<
-     float, cutlass::layout::ColumnMajor,
-     float, cutlass::layout::ColumnMajor,
-     float, cutlass::layout::ColumnMajor
+     float, cutlass::layout::RowMajor,
+     float, cutlass::layout::RowMajor,
+     float, cutlass::layout::RowMajor
    >;
  
    Gemm gemm_op;
@@ -156,37 +156,22 @@
    /*
    strided batched gemm NN
    */
-   
-   cudaError_t result = cudaSuccess;
  
-   if (A.size() < lda * k * batch_count) {
-     std::cout << "the size of A is too small" << std::endl;
-     return cudaErrorInvalidValue;
-   }
-   if (B.size() < ldb * n) {
-     std::cout << "the size of B is too small" << std::endl;
-     return cudaErrorInvalidValue;
-   }
-   if (C.size() < ldc * n * batch_count) {
-     std::cout << "the size of C is too small" << std::endl;
-     return cudaErrorInvalidValue;
-   }
-   
    for (int batch_idx = 0; batch_idx < batch_count; batch_idx++) {
      for (int n_idx = 0; n_idx < n; n_idx++) {
        for (int m_idx = 0; m_idx < m; m_idx++) {
-         T accum = beta * C[batch_idx * batch_stride_C + n_idx * ldc + m_idx];
+         T accum = beta * C[batch_idx * batch_stride_C + m_idx * ldc + n_idx];
          for (int k_idx = 0; k_idx < k; k_idx++) {
            accum += alpha 
-             * A[batch_idx * batch_stride_A + k_idx * lda + m_idx]
-             * B[batch_idx * batch_stride_B + n_idx * ldb + k_idx];
+             * A[batch_idx * batch_stride_A + m_idx * lda + k_idx]
+             * B[batch_idx * batch_stride_B + k_idx * ldb + n_idx];
          }
-         C[batch_idx * batch_stride_C + n_idx * ldc + m_idx] = accum;
+         C[batch_idx * batch_stride_C + m_idx * ldc + n_idx] = accum;
        }
      }
    }
  
-   return result;
+   return cudaSuccess;
  }
  
  int main() {
@@ -198,18 +183,18 @@
    int const batch_count = 17;
  
    // A, B are non-transpose, column major
-   int const lda = m;
-   int const ldb = k * batch_count;
-   int const ldc = m;
+   int const lda = k;
+   int const ldb = n;
+   int const ldc = n;
 
-   int const count_A = batch_count * lda * k;
-   int const count_B = ldb * n;
-   int const count_C = batch_count * ldc * n;
+   int const count_A = batch_count * lda * m;
+   int const count_B = batch_count * ldb * k;
+   int const count_C = batch_count * ldc * m;
  
    // the memory is batched along K dimension
-   long long int batch_stride_A = static_cast<long long int>(lda) * static_cast<long long int>(k);
-   long long int batch_stride_B = static_cast<long long int>(k);
-   long long int batch_stride_C = static_cast<long long int>(ldc) * static_cast<long long int>(n);
+   long long int batch_stride_A = static_cast<long long int>(m) * static_cast<long long int>(k);
+   long long int batch_stride_B = static_cast<long long int>(k) * static_cast<long long int>(n);
+   long long int batch_stride_C = static_cast<long long int>(m) * static_cast<long long int>(n);
  
    // alpha and beta
    float alpha = 1.0f;
@@ -282,7 +267,7 @@
    //compare with reference code
    result = strided_batched_gemm_nn_reference(m, n, k, alpha, ref_A, lda, batch_stride_A, ref_B, ldb, batch_stride_B, ref_C, ldc, batch_stride_C,
      beta, batch_count);
-   if (result != 0)
+   if (result != cudaSuccess)
      return result;
  
    // Expect bit-level accuracy for this simple example
