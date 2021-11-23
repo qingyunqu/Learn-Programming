@@ -110,8 +110,9 @@
    using Gemm = cutlass::gemm::device::GemmBatched<
      float, cutlass::layout::RowMajor,
      float, cutlass::layout::RowMajor,
-     float, cutlass::layout::RowMajor
-   >;
+     float, cutlass::layout::RowMajor,
+     float, cutlass::arch::OpClassSimt,
+     cutlass::arch::Sm70>;
  
    Gemm gemm_op;
  
