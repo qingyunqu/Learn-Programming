@@ -2,12 +2,15 @@ CXX := nvcc
 CXXFLAGS := -arch=sm_70 -std=c++14 -O3
 HEADPATH := -I/root/share/cutlass/include -I/root/share/cutlass/tools/util/include
 
-all: target
+all: conv convbias
 
-target: conv.cu
-	$(CXX) $(CXXFLAGS) $< -o test -lcudnn $(HEADPATH)
+conv: conv.cu
+	$(CXX) $(CXXFLAGS) $< -o $@ -lcudnn $(HEADPATH)
+
+convbias: convbias.cu
+	$(CXX) $(CXXFLAGS) $< -o $@ -lcudnn $(HEADPATH)
 
 .phony: clean
 
 clean:
-	rm test || echo -n ""
+	rm conv convbias || echo -n ""

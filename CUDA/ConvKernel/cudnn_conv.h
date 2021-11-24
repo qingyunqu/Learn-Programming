@@ -22,11 +22,11 @@ private:
     cudaStream_t m_stream;
 
 public:
-    Conv(int N, int iC, int iH, int iW, int oC, int kH, int kW, int oH, int oW,
-         int strideH, int strideW, int paddingH, int paddingW,
-         cudaStream_t stream, float* input, float* filter, float* output) {
+    Conv(float* input, float* filter, float* output, int N, int iC, int iH,
+         int iW, int oC, int kH, int kW, int oH, int oW, int strideH,
+         int strideW, int paddingH, int paddingW, cudaStream_t stream) {
         this->m_stream = stream;
-        auto format = CUDNN_TENSOR_NHWC;
+        auto format = CUDNN_TENSOR_NCHW;
         CUDNNCHECK(cudnnCreate(&cudnn));
         CUDNNCHECK(cudnnSetStream(cudnn, m_stream));
         // input

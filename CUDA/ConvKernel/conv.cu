@@ -22,7 +22,7 @@ using LayoutOutput = cutlass::layout::TensorNHWC;
 using MMAOp = cutlass::arch::OpClassSimt;
 using SmArch = cutlass::arch::Sm70;
 using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 8>;
-using WarpShape = cutlass::gemm::GemmShape<32, 32, 8>;
+using WarpShape = cutlass::gemm::GemmShape<64, 64, 8>;
 using InstructionShape = cutlass::gemm::GemmShape<1, 1, 1>;
 // This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
@@ -31,7 +31,7 @@ constexpr int NumStages = 2;
 // This code section describes the epilogue part of the kernel, we use default value
 using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
     ElementOutput,                                     // Data type of output matrix.
-    128 / cutlass::sizeof_bits<ElementOutput>::value,                                                 // The number of elements per vectorized.
+    1,                                                 // The number of elements per vectorized.
                                                        // memory access. This becomes the vector width of
                                                        // math instructions in the epilogue too.
     ElementAccumulator,                                // Data type of accumulator
@@ -87,9 +87,10 @@ int main() {
     output.sync_device();
     output_ref.sync_device();
 
-    cudaStream_t stream = 0;
-    Conv conv(N, iC, iH, iW, oC, kH, kW, oH, oW, strideH, strideW, paddingH, paddingW,
-              stream, input.device_data(), filter.device_data(), output_ref.device_data());
+    cudaStream_t stream = nullptr;
+    Conv conv(input.device_data(), filter.device_data(), output_ref.device_data(),
+              N, iC, iH, iW, oC, kH, kW, oH, oW, strideH, strideW, paddingH, paddingW,
+              stream);
 
     cudaEvent_t start, stop;
     float elapsedTime;
@@ -126,18 +127,14 @@ int main() {
     ImplicitGemm implicit_gemm_op;
     size_t workspace_size = implicit_gemm_op.get_workspace_size(arguments);
     cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
-    printf("before can_implement\n");
     CUTLASS_CHECK(implicit_gemm_op.can_implement(arguments));
-    printf("after can_implement\n");
     CUTLASS_CHECK(implicit_gemm_op.initialize(arguments, workspace.get()));
     printf("cutlass:\n");
     for(int i = 0; i <= 10; i++) {
         CUDACHECK(cudaEventRecord(start, stream));
         CUTLASS_CHECK(implicit_gemm_op());
         CUDACHECK(cudaEventRecord(stop, stream));
-        printf("before cudaEventSynchronize\n");
         CUDACHECK(cudaEventSynchronize(stop));
-        printf("after cudaEventSynchronize\n");
         CUDACHECK(cudaEventElapsedTime(&elapsedTime, start, stop));
         printf("time: %fms\n", elapsedTime);
     }

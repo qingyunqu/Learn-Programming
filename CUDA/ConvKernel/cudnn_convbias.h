@@ -9,24 +9,29 @@ class ConvBias {
 private:
     cudnnHandle_t cudnn;
     cudnnTensorDescriptor_t input_descriptor;
-    cudnnTensorDescriptor_t output_descriptor;
     cudnnFilterDescriptor_t kernel_descriptor;
+    cudnnTensorDescriptor_t bias_descriptor;
+    cudnnActivationDescriptor_t act_descriptor;
+    cudnnTensorDescriptor_t output_descriptor;
     cudnnConvolutionDescriptor_t convolution_descriptor;
     cudnnConvolutionFwdAlgo_t convolution_algorithm;
     size_t workspace_bytes = 0;
     void* d_workspace{nullptr};
     float* d_input{nullptr};
-    float* d_output{nullptr};
     float* d_filter{nullptr};
-    const float alpha = 1.f, beta = 0.f;
+    float* d_bias{nullptr};
+    float* d_output{nullptr};
+    const float alpha1 = 1.f;
+    const float alpha2 = 0.f;  // non fuse-z
     cudaStream_t m_stream;
 
 public:
-    Conv(int N, int iC, int iH, int iW, int oC, int kH, int kW, int oH, int oW,
-         int strideH, int strideW, int paddingH, int paddingW,
-         cudaStream_t stream, float* input, float* filter, float* output) {
+    ConvBias(float* input, float* filter, float* bias, float* output, int N,
+             int iC, int iH, int iW, int oC, int kH, int kW, int oH, int oW,
+             int strideH, int strideW, int paddingH, int paddingW,
+             cudaStream_t stream) {
         this->m_stream = stream;
-        auto format = CUDNN_TENSOR_NHWC;
+        auto format = CUDNN_TENSOR_NCHW;
         CUDNNCHECK(cudnnCreate(&cudnn));
         CUDNNCHECK(cudnnSetStream(cudnn, m_stream));
         // input
@@ -47,6 +52,15 @@ public:
                                               /*channels=*/oC,
                                               /*image_height=*/oH,
                                               /*image_width=*/oW));
+        // bias
+        CUDNNCHECK(cudnnCreateTensorDescriptor(&bias_descriptor));
+        CUDNNCHECK(cudnnSetTensor4dDescriptor(bias_descriptor,
+                                              /*format=*/format,
+                                              /*dataType=*/CUDNN_DATA_FLOAT,
+                                              /*batch_size=*/1,
+                                              /*channels=*/oC,
+                                              /*image_height=*/1,
+                                              /*image_width=*/1));
         // filter
         CUDNNCHECK(cudnnCreateFilterDescriptor(&kernel_descriptor));
         CUDNNCHECK(cudnnSetFilter4dDescriptor(kernel_descriptor,
@@ -56,6 +70,9 @@ public:
                                               /*in_channels=*/iC,
                                               /*kernel_height=*/kH,
                                               /*kernel_width=*/kW));
+        // activation
+        CUDNNCHECK(cudnnCreateActivationDescriptor(&act_descriptor));
+        CUDNNCHECK(cudnnSetActivationDescriptor(act_descriptor, CUDNN_ACTIVATION_RELU, CUDNN_PROPAGATE_NAN, 0));
         // convolution
         CUDNNCHECK(cudnnCreateConvolutionDescriptor(&convolution_descriptor));
         CUDNNCHECK(cudnnSetConvolution2dDescriptor(
@@ -92,26 +109,30 @@ public:
 
         d_input = input;
         d_filter = filter;
+        d_bias = bias;
         d_output = output;
     }
 
     void forward() {
-        CUDNNCHECK(cudnnConvolutionForward(
-                cudnn, &alpha, input_descriptor, d_input, kernel_descriptor,
+        CUDNNCHECK(cudnnConvolutionBiasActivationForward(
+                cudnn, &alpha1, input_descriptor, d_input, kernel_descriptor,
                 d_filter, convolution_descriptor,
                 convolution_algorithm /*CUDNN_CONVOLUTION_FWD_ALGO_DIRECT*/,
-                d_workspace, workspace_bytes, &beta, output_descriptor,
-                d_output));
+                d_workspace, workspace_bytes, &alpha2,
+                /*zDesc=*/output_descriptor,
+                /*z=*/d_output, bias_descriptor, d_bias, act_descriptor,
+                output_descriptor, d_output));
     }
 
     cudaStream_t stream() { return this->m_stream; }
 
-    ~Conv() {
+    ~ConvBias() {
         CUDACHECK(cudaFree(d_workspace));
 
         CUDNNCHECK(cudnnDestroyTensorDescriptor(input_descriptor));
         CUDNNCHECK(cudnnDestroyTensorDescriptor(output_descriptor));
         CUDNNCHECK(cudnnDestroyFilterDescriptor(kernel_descriptor));
+        CUDNNCHECK(cudnnDestroyTensorDescriptor(bias_descriptor));
         CUDNNCHECK(cudnnDestroyConvolutionDescriptor(convolution_descriptor));
 
         CUDNNCHECK(cudnnDestroy(cudnn));
