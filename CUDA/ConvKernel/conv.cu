@@ -1,4 +1,5 @@
 #include "cudnn_conv.h"
+#include "../helper.h"
 
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/device/gemm.h"
@@ -78,8 +79,10 @@ int main() {
     cutlass::HostTensor<ElementInputB, LayoutInputB> filter(filter_size);
     cutlass::HostTensor<ElementOutput, LayoutOutput> output(output_size);
     cutlass::HostTensor<ElementOutput, LayoutOutput> output_ref(output_size);
-    cutlass::reference::host::TensorFillRandomUniform(input.host_view(), 1, ElementInputA(1), ElementInputA(-1), 0);
-    cutlass::reference::host::TensorFillRandomUniform(filter.host_view(), 1, ElementInputB(1), ElementInputB(-1), 0);
+    //cutlass::reference::host::TensorFillRandomUniform(input.host_view(), 1, ElementInputA(1), ElementInputA(-1), 0);
+    //cutlass::reference::host::TensorFillRandomUniform(filter.host_view(), 1, ElementInputB(1), ElementInputB(-1), 0);
+    TensorFillRandom<ElementInputA>(input.host_data(), (size_t)N * iH * iW *iC, 1, 1, -1);
+    TensorFillRandom<ElementInputB>(filter.host_data(), (size_t)oC * kH * kW * iC, 1, 1, -1);
     cutlass::reference::host::TensorFill(output.host_view());
     cutlass::reference::host::TensorFill(output_ref.host_view());
     input.sync_device();
@@ -128,7 +131,7 @@ int main() {
     size_t workspace_size = implicit_gemm_op.get_workspace_size(arguments);
     cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
     CUTLASS_CHECK(implicit_gemm_op.can_implement(arguments));
-    CUTLASS_CHECK(implicit_gemm_op.initialize(arguments, workspace.get()));
+    CUTLASS_CHECK(implicit_gemm_op.initialize(arguments, workspace.get(), stream));
     printf("cutlass:\n");
     for(int i = 0; i <= 10; i++) {
         CUDACHECK(cudaEventRecord(start, stream));
@@ -139,9 +142,10 @@ int main() {
         printf("time: %fms\n", elapsedTime);
     }
 
+    cudaDeviceSynchronize();
     output.sync_host();
     output_ref.sync_host();
-    bool passed = cutlass::reference::host::TensorEquals(output.host_view(), output_ref.host_view());
+    bool passed = TensorEquals<ElementOutput>(output.host_data(), output_ref.host_data(), (size_t)N * oC * oH * oW);
     if(!passed) {
         printf("ERROR - results miscompared.\n");
     }
