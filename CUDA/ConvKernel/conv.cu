@@ -81,8 +81,8 @@ int main() {
     cutlass::HostTensor<ElementOutput, LayoutOutput> output_ref(output_size);
     //cutlass::reference::host::TensorFillRandomUniform(input.host_view(), 1, ElementInputA(1), ElementInputA(-1), 0);
     //cutlass::reference::host::TensorFillRandomUniform(filter.host_view(), 1, ElementInputB(1), ElementInputB(-1), 0);
-    TensorFillRandom<ElementInputA>(input.host_data(), (size_t)N * iH * iW *iC, 1, 1, -1);
-    TensorFillRandom<ElementInputB>(filter.host_data(), (size_t)oC * kH * kW * iC, 1, 1, -1);
+    TensorFillRandom<ElementInputA>(input.host_data(), (size_t)N * iH * iW *iC, 1, ElementInputA(1), ElementInputA(-1));
+    TensorFillRandom<ElementInputB>(filter.host_data(), (size_t)oC * kH * kW * iC, 1, ElementInputB(1), ElementInputB(-1));
     cutlass::reference::host::TensorFill(output.host_view());
     cutlass::reference::host::TensorFill(output_ref.host_view());
     input.sync_device();

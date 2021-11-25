@@ -1,5 +1,6 @@
 #include "cudnn_convbias.h"
 #include "cudnn_conv.h"
+#include "../helper.h"
 
 #include "cutlass/cutlass.h"
 #include "cutlass/layout/layout.h"
@@ -16,9 +17,9 @@ using ElementOutput = float;             // Data type of elements in output tens
 using ElementAccumulator = float;        // Data type of accumulator
 using ElementComputeEpilogue = float;    // Data type of epilogue computation (alpha, beta)
 
-using LayoutInputA = cutlass::layout::TensorNCHW;
-using LayoutInputB = cutlass::layout::TensorNCHW;
-using LayoutOutput = cutlass::layout::TensorNCHW;
+using LayoutInputA = cutlass::layout::TensorNHWC;
+using LayoutInputB = cutlass::layout::TensorNHWC;
+using LayoutOutput = cutlass::layout::TensorNHWC;
 
 int main() {
     int N = 5;
@@ -35,18 +36,21 @@ int main() {
     int oH = (iH + 2 * paddingH - kH) / strideH + 1;
     int oW = (iW + 2 * paddingW - kW) / strideW + 1;
 
-    cutlass::Tensor4DCoord input_size(N, iC, iH, iW);
-    cutlass::Tensor4DCoord filter_size(oC, iC, kH, kW);
-    cutlass::Tensor4DCoord bias_size(1, oC, 1, 1);
-    cutlass::Tensor4DCoord output_size(N, oC, oH, oW);
+    cutlass::Tensor4DCoord input_size(N, iH, iW, iC);
+    cutlass::Tensor4DCoord filter_size(oC, kH, kW, iC);
+    cutlass::Tensor4DCoord bias_size(1, 1, 1, oC);
+    cutlass::Tensor4DCoord output_size(N, oH, oW, oC);
     cutlass::HostTensor<ElementInputA, LayoutInputA> input(input_size);
     cutlass::HostTensor<ElementInputB, LayoutInputB> filter(filter_size);
     cutlass::HostTensor<ElementOutput, LayoutOutput> bias(bias_size);
     cutlass::HostTensor<ElementOutput, LayoutOutput> output(output_size);
     cutlass::HostTensor<ElementOutput, LayoutOutput> output_ref(output_size);
-    cutlass::reference::host::TensorFillRandomUniform(input.host_view(), 1, ElementInputA(1), ElementInputA(-1), 0);
-    cutlass::reference::host::TensorFillRandomUniform(filter.host_view(), 1, ElementInputB(1), ElementInputB(-1), 0);
-    cutlass::reference::host::TensorFillRandomUniform(bias.host_view(), 1, ElementOutput(1), ElementOutput(-1), 0);
+    //cutlass::reference::host::TensorFillRandomUniform(input.host_view(), 1, ElementInputA(1), ElementInputA(-1), 0);
+    //cutlass::reference::host::TensorFillRandomUniform(filter.host_view(), 1, ElementInputB(1), ElementInputB(-1), 0);
+    //cutlass::reference::host::TensorFillRandomUniform(bias.host_view(), 1, ElementOutput(1), ElementOutput(-1), 0);
+    TensorFillRandom<ElementInputA>(input.host_data(), (size_t)N * iH * iW *iC, 1, ElementInputA(1), ElementInputA(-1));
+    TensorFillRandom<ElementInputB>(filter.host_data(), (size_t)oC * kH * kW * iC, 1, ElementInputB(1), ElementInputB(-1));
+    TensorFillRandom<ElementOutput>(bias.host_data(), (size_t)oC, 1, ElementOutput(1), ElementOutput(-1));
     cutlass::reference::host::TensorFill(output.host_view());
     cutlass::reference::host::TensorFill(output_ref.host_view());
     input.sync_device();
@@ -68,18 +72,17 @@ int main() {
     output.sync_host();
     output_ref.sync_host();
 
-    // for (int i = 0; i < N; i++) {
-    //     for (int j = 0; j < oC; j++) {
-    //         for (int k = 0; k < oH; k++) {
-    //             for (int l = 0; l < oW; l++) {
-    //                 // output_ref.at({i, j, k, l}) = std::max(0.f, output_ref.at({i, j, k, l}) + bias.at({0, j, 0, 0}));
-    //                 // output_ref.at({i, j, k, l}) = output_ref.at({i, j, k, l}) + bias.at({0, j, 0, 0});
-    //             }
-    //         }
-    //     }
-    // }
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < oH; j++) {
+            for (int k = 0; k < oW; k++) {
+                for (int l = 0; l < oC; l++) {
+                    output_ref.at({i, j, k, l}) = std::max(ElementOutput(0), output_ref.at({i, j, k, l}) + bias.at({0, 0, 0, l}));
+                }
+            }
+        }
+    }
 
-    bool passed = cutlass::reference::host::TensorEquals(output.host_view(), output_ref.host_view());
+    bool passed = TensorEquals<ElementOutput>(output.host_data(), output_ref.host_data(), (size_t)N * oC * oH * oW);
     if (!passed) {
         printf("ERROR - results miscompared.\n");
     }

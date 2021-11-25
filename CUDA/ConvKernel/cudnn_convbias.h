@@ -31,7 +31,7 @@ public:
              int strideH, int strideW, int paddingH, int paddingW,
              cudaStream_t stream) {
         this->m_stream = stream;
-        auto format = CUDNN_TENSOR_NCHW;
+        auto format = CUDNN_TENSOR_NHWC;
         CUDNNCHECK(cudnnCreate(&cudnn));
         CUDNNCHECK(cudnnSetStream(cudnn, m_stream));
         // input
