@@ -2,10 +2,10 @@ CXX := nvcc
 CXXFLAGS := -arch=sm_70 -std=c++14 -O3
 HEADPATH := -I/root/share/cutlass/include -I/root/share/cutlass/tools/util/include
 
-all: target
+all: matmul_all
 
-target: matmul.cu
-	$(CXX) $(CXXFLAGS) $< -o test -lcublas $(HEADPATH)
+matmul_all: matmul_all.cu
+	$(CXX) $(CXXFLAGS) $< -o $@ -lcublas $(HEADPATH)
 
 .phony: clean
 
