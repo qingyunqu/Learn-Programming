@@ -148,6 +148,8 @@ int main() {
     bool passed = TensorEquals<ElementOutput>(output.host_data(), output_ref.host_data(), (size_t)N * oC * oH * oW);
     if(!passed) {
         printf("ERROR - results miscompared.\n");
+    } else {
+        printf("Passed.\n");
     }
 
     CUDACHECK(cudaEventDestroy(start));
