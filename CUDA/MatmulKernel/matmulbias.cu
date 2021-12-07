@@ -59,9 +59,9 @@ using ElementOutput = float;                        // <- data type of elements 
 //   3) Mx1 bias vector becomes 1xM after the swapping/transposing.
 //   4) we can use the existing OutputIterator to load 1xM bias vector.
 
-using LayoutInputA = cutlass::layout::ColumnMajor;
-using LayoutInputB = cutlass::layout::ColumnMajor;
-using LayoutOutput = cutlass::layout::ColumnMajor;
+using LayoutInputA = cutlass::layout::RowMajor;
+using LayoutInputB = cutlass::layout::RowMajor;
+using LayoutOutput = cutlass::layout::RowMajor;
 
 // This code section describes whether you want to use tensor cores or regular SIMT cores on GPU SM
 using MMAOp = cutlass::arch::OpClassTensorOp;
@@ -124,20 +124,13 @@ int run() {
   cutlass::gemm::GemmCoord problem_size(length_m, length_n, length_k);
 
   // Initialize tensors using CUTLASS helper functions
-  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_a(
-      problem_size.mk());  // <- Create matrix A with dimensions M x K
-  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_b(
-      problem_size.kn());  // <- Create matrix B with dimensions K x N
+  cutlass::HostTensor<ElementInputA, LayoutInputA> tensor_a(problem_size.mk());  // <- Create matrix A with dimensions M x K
+  cutlass::HostTensor<ElementInputB, LayoutInputB> tensor_b(problem_size.kn());  // <- Create matrix B with dimensions K x N
 
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_c_bias(
-      {problem_size.m(), 1});  // <- Create matrix C with dimensions M x 1
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_c_bias({1, problem_size.n()});  // <- Create matrix C with dimensions 1 x N
 
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_d(
-      problem_size.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                           // CUTLASS kernel
-  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_d(
-      problem_size.mn());  // <- Create matrix D with dimensions M x N used to store output from
-                           // reference kernel
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_d(problem_size.mn());  // <- Create matrix D with dimensions M x N used to store output from CUTLASS kernel
+  cutlass::HostTensor<ElementOutput, LayoutOutput> tensor_ref_d(problem_size.mn());  // <- Create matrix D with dimensions M x N used to store output from reference kernel
 
   // Fill input and output matrices on host using CUTLASS helper functions
   cutlass::reference::host::TensorFillRandomUniform(
@@ -158,10 +151,8 @@ int run() {
       ElementOutput(4),
       ElementOutput(-4),
       0);  // <- Fill matrix C on host with uniform-distribution random data
-  cutlass::reference::host::TensorFill(
-      tensor_d.host_view());  // <- fill matrix D on host with zeros
-  cutlass::reference::host::TensorFill(
-      tensor_ref_d.host_view());  // <- fill matrix D for reference on host with zeros
+  cutlass::reference::host::TensorFill(tensor_d.host_view());  // <- fill matrix D on host with zeros
+  cutlass::reference::host::TensorFill(tensor_ref_d.host_view());  // <- fill matrix D for reference on host with zeros
 
   // Copy data from host to GPU
   tensor_a.sync_device();
@@ -200,16 +191,13 @@ int run() {
   Gemm gemm_op;
 
   // Check the problem size is supported or not 
-  cutlass::Status status = gemm_op.can_implement(arguments);
-  CUTLASS_CHECK(status);
+  CUTLASS_CHECK(gemm_op.can_implement(arguments));
 
   // Initialize CUTLASS kernel with arguments and workspace pointer
-  status = gemm_op.initialize(arguments, workspace.get());
-  CUTLASS_CHECK(status);
+  CUTLASS_CHECK(gemm_op.initialize(arguments, workspace.get()));
 
   // Launch initialized CUTLASS kernel
-  status = gemm_op();
-  CUTLASS_CHECK(status);
+  CUTLASS_CHECK(gemm_op());
 
   //
   // Create instantiation for device reference gemm kernel
@@ -246,7 +234,7 @@ int run() {
     for (int j = 0; j < problem_size.n(); ++j) {
       tensor_ref_d.at({i, j}) = std::max(
         ElementOutput(0), 
-        ElementOutput(tensor_ref_d.at({i, j}) + tensor_c_bias.at({i, 0}))
+        ElementOutput(tensor_ref_d.at({i, j}) + tensor_c_bias.at({0, j}))
       );
     }
   }
@@ -258,7 +246,6 @@ int run() {
                     : "Failed")
             << std::endl;
 
-  CUTLASS_CHECK(status);
   return 0;
 }
 
