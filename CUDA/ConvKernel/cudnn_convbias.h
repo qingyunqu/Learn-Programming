@@ -94,7 +94,7 @@ public:
                 /*requestedAlgoCount=*/1, &returnedAlgoCount, &perfResults));
         assert(returnedAlgoCount == 1);
         convolution_algorithm = perfResults.algo;
-        std::cout << "perfResults status: "
+        std::cout << "cudnn perfResults status: "
                   << cudnnGetErrorString(perfResults.status) << std::endl;
         workspace_bytes = perfResults.memory;
         // workspace size
@@ -103,7 +103,7 @@ public:
         //         convolution_descriptor, output_descriptor,
         //         convolution_algorithm /*CUDNN_CONVOLUTION_FWD_ALGO_DIRECT*/,
         //         &workspace_bytes));
-        std::cerr << "Workspace size: " << (workspace_bytes) << " byte"
+        std::cerr << "cudnn workspace size: " << (workspace_bytes) << " byte"
                   << std::endl;
         CUDACHECK(cudaMalloc(&d_workspace, workspace_bytes));
 

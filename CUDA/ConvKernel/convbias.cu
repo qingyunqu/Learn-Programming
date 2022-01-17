@@ -25,8 +25,8 @@ using LayoutOutput = cutlass::layout::TensorNHWC;
 
 using MMAOp = cutlass::arch::OpClassSimt;
 using SmArch = cutlass::arch::Sm70;
-using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 8>;
-using WarpShape = cutlass::gemm::GemmShape<64, 64, 8>;
+using ThreadblockShape = cutlass::gemm::GemmShape<128, 128, 32>;
+using WarpShape = cutlass::gemm::GemmShape<32, 32, 32>;
 using InstructionShape = cutlass::gemm::GemmShape<1, 1, 1>;
 // This code section describes how threadblocks are scheduled on GPU
 using SwizzleThreadBlock = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
@@ -61,17 +61,17 @@ using Conv2dFpropKernel = typename cutlass::conv::kernel::DefaultConv2dFprop<
 using ImplicitGemm = cutlass::conv::device::ImplicitGemmConvolution<Conv2dFpropKernel>;
 
 int main() {
-    int N = 5;
-    int iC = 69; // C
-    int iH = 31;
-    int iW = 95;
-    int oC = 64; // K
-    int kH = 3;  // R
-    int kW = 3;  // S
+    int N = 1;
+    int iC = 64;  // C
+    int iH = 56;
+    int iW = 56;
+    int oC = 256;  // K
+    int kH = 1;    // R
+    int kW = 1;    // S
     int strideH = 1;
     int strideW = 1;
-    int paddingH = 1;  // int paddingH0 = 1; int paddingH1 = 1;
-    int paddingW = 1;  // int paddingW0 = 1; int paddingW1 = 1;
+    int paddingH = 0;  // int paddingH0 = 1; int paddingH1 = 1;
+    int paddingW = 0;  // int paddingW0 = 1; int paddingW1 = 1;
     int oH = (iH + 2 * paddingH - kH) / strideH + 1;
     int oW = (iW + 2 * paddingW - kW) / strideW + 1;
 

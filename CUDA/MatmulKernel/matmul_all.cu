@@ -470,28 +470,3 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-// void check_matrix_col_row(float* c, float* ref_c, int M, int N) {
-//     for (int i = 0; i < M; i++) {
-//         for (int j = 0; j < N; j++) {
-//             if (ref_c[i * N + j] != c[i + j * M]) {
-//                 fprintf(stderr,
-//                         "check failed: c[%d][%d], ref: %f, kernel: %f\n", i,
-//                         j, ref_c[i * N + j], c[i + j * M]);
-//                 return;
-//             }
-//         }
-//     }
-// }
-
-// void check_matrix_col_col(float* c, float* ref_c, int M, int N) {
-//     for (int i = 0; i < M; i++) {
-//         for (int j = 0; j < N; j++) {
-//             if (ref_c[i + j * M] != c[i + j * M]) {
-//                 fprintf(stderr,
-//                         "check failed: c[%d][%d], ref: %f, kernel: %f\n", i,
-//                         j, ref_c[i + j * M], c[i + j * M]);
-//                 return;
-//             }
-//         }
-//     }
-// }
