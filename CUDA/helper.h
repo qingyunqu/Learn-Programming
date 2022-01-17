@@ -4,11 +4,13 @@
 #include <cstdlib>
 #include <algorithm>
 
+#include "cuda_fp16.h"
+
 template <typename T>
 void TensorFillRandom(T* input, size_t total_size, int seed = 1, T max = 1, T min = 0) {
     srand(seed);
     for(size_t i = 0; i < total_size; i++) {
-        input[i] = (T)((rand() / (float)2147483647) * (max - min) + min);
+        input[i] = (T)((T)(rand() / (float)2147483647) * (max - min) + min);
     }
 }
 

@@ -5,6 +5,7 @@
 #include <iostream>
 #include "../check.h"
 
+template <typename ElementInputA, typename ElementInputB, typename ElementOutput>
 class ConvBias {
 private:
     cudnnHandle_t cudnn;
@@ -17,28 +18,30 @@ private:
     cudnnConvolutionFwdAlgo_t convolution_algorithm;
     size_t workspace_bytes = 0;
     void* d_workspace{nullptr};
-    float* d_input{nullptr};
-    float* d_filter{nullptr};
-    float* d_bias{nullptr};
-    float* d_output{nullptr};
+    ElementInputA* d_input{nullptr};
+    ElementInputB* d_filter{nullptr};
+    ElementOutput* d_bias{nullptr};
+    ElementOutput* d_output{nullptr};
     const float alpha1 = 1.f;
     const float alpha2 = 0.f;  // non fuse-z
     cudaStream_t m_stream;
 
 public:
-    ConvBias(float* input, float* filter, float* bias, float* output, int N,
+    ConvBias(ElementInputA* input, ElementInputB* filter, ElementOutput* bias, ElementOutput* output, int N,
              int iC, int iH, int iW, int oC, int kH, int kW, int oH, int oW,
              int strideH, int strideW, int paddingH, int paddingW,
-             cudaStream_t stream) {
+             cudaStream_t stream, int dilationH = 1, int dilationW = 1) {
         this->m_stream = stream;
         auto format = CUDNN_TENSOR_NHWC;
+        auto dataType = CUDNN_DATA_FLOAT;
+        auto computeType = CUDNN_DATA_FLOAT;
         CUDNNCHECK(cudnnCreate(&cudnn));
         CUDNNCHECK(cudnnSetStream(cudnn, m_stream));
         // input
         CUDNNCHECK(cudnnCreateTensorDescriptor(&input_descriptor));
         CUDNNCHECK(cudnnSetTensor4dDescriptor(input_descriptor,
                                               /*format=*/format,
-                                              /*dataType=*/CUDNN_DATA_FLOAT,
+                                              /*dataType=*/dataType,
                                               /*batch_size=*/N,
                                               /*channels=*/iC,
                                               /*image_height=*/iH,
@@ -47,7 +50,7 @@ public:
         CUDNNCHECK(cudnnCreateTensorDescriptor(&output_descriptor));
         CUDNNCHECK(cudnnSetTensor4dDescriptor(output_descriptor,
                                               /*format=*/format,
-                                              /*dataType=*/CUDNN_DATA_FLOAT,
+                                              /*dataType=*/dataType,
                                               /*batch_size=*/N,
                                               /*channels=*/oC,
                                               /*image_height=*/oH,
@@ -56,7 +59,7 @@ public:
         CUDNNCHECK(cudnnCreateTensorDescriptor(&bias_descriptor));
         CUDNNCHECK(cudnnSetTensor4dDescriptor(bias_descriptor,
                                               /*format=*/format,
-                                              /*dataType=*/CUDNN_DATA_FLOAT,
+                                              /*dataType=*/dataType,
                                               /*batch_size=*/1,
                                               /*channels=*/oC,
                                               /*image_height=*/1,
@@ -64,7 +67,7 @@ public:
         // filter
         CUDNNCHECK(cudnnCreateFilterDescriptor(&kernel_descriptor));
         CUDNNCHECK(cudnnSetFilter4dDescriptor(kernel_descriptor,
-                                              /*dataType=*/CUDNN_DATA_FLOAT,
+                                              /*dataType=*/dataType,
                                               /*format=*/format,
                                               /*out_channels=*/oC,
                                               /*in_channels=*/iC,
@@ -81,10 +84,10 @@ public:
                 /*pad_w=*/paddingW,
                 /*u=*/strideH,
                 /*v=*/strideW,
-                /*dilation_h=*/1,
-                /*dilation_w=*/1,
+                /*dilation_h=*/dilationH,
+                /*dilation_w=*/dilationW,
                 /*mode=*/CUDNN_CROSS_CORRELATION,
-                /*computeType=*/CUDNN_DATA_FLOAT));
+                /*computeType=*/computeType));
         // convolution forward
         int returnedAlgoCount = 0;
         cudnnConvolutionFwdAlgoPerf_t perfResults;
